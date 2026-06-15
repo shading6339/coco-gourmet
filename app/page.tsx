@@ -1,11 +1,45 @@
-import { DesignSystemPreview } from "@/app/design-system-preview";
+import { Suspense } from "react";
 
-export default function Home(): React.JSX.Element {
+import { HomeContent } from "@/app/home-content";
+import { HomeSuspenseFallback } from "@/app/home-suspense-fallback";
+import { parseSearchUrl } from "@/lib/search/search-url";
+
+type PageProps = {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
+
+function toURLSearchParams(
+  params: Record<string, string | string[] | undefined>,
+): URLSearchParams {
+  const searchParams = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined) continue;
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        searchParams.append(key, item);
+      }
+      continue;
+    }
+
+    searchParams.set(key, value);
+  }
+
+  return searchParams;
+}
+
+export default async function Home({
+  searchParams,
+}: PageProps): Promise<React.JSX.Element> {
+  const params = await searchParams;
+  const initialUrlState = parseSearchUrl(toURLSearchParams(params));
+
   return (
-    <div className="app-scroll-root">
-      <main className="page-shell page-shell--under-app-bar mx-auto">
-        <DesignSystemPreview />
-      </main>
-    </div>
+    <Suspense
+      fallback={<HomeSuspenseFallback initialUrlState={initialUrlState} />}
+    >
+      <HomeContent initialUrlState={initialUrlState} />
+    </Suspense>
   );
 }
