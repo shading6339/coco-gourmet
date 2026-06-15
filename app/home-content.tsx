@@ -20,6 +20,7 @@ import {
   PullNextPageRefreshFooter,
   RecommendationSections,
   RestaurantCard,
+  RestaurantDetail,
   SearchConditionOverlay,
   SearchResultMeta,
   SkeletonCard,
@@ -36,6 +37,7 @@ import { TEXT } from "@/constants/text";
 import { useFavorites } from "@/hooks/use-favorites";
 import { useLocationState } from "@/hooks/use-location-state";
 import { usePullNextPage } from "@/hooks/use-pull-next-page";
+import { useViewHistory } from "@/hooks/use-view-history";
 import { useSearchUrlState } from "@/hooks/use-search-url-state";
 import { useShopSearch } from "@/hooks/use-shop-search";
 import type { SpecialSearchOption } from "@/lib/hotpepper/masters";
@@ -72,7 +74,8 @@ import { cn } from "@/lib/utils";
 import type { RecommendationSection } from "@/types/recommendation";
 import type { Shop } from "@/types/shop";
 
-type ViewMode = "search" | "genres" | "list";
+type ViewMode = "search" | "genres" | "list" | "detail";
+type DetailReturnTarget = "home" | "search" | "history" | "favorites";
 type RangeValue = (typeof RANGE_OPTIONS)[number]["value"];
 type ResultLoadingFeedback = "skeleton" | "quiet";
 
@@ -173,6 +176,9 @@ export function HomeContent({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const skeletonTimerRef = useRef<number | null>(null);
   const didInitialUrlFetchRef = useRef(false);
+  const pendingHomeScrollTopRef = useRef<number | null>(null);
+  const viewModeBeforeDetailRef = useRef<ViewMode>("search");
+  const distanceBackfilledRef = useRef<string | null>(null);
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>(() =>
@@ -202,10 +208,13 @@ export function HomeContent({
   const [mastersErrorMessage, setMastersErrorMessage] = useState<string | null>(
     null,
   );
-  /** Issue 10 で詳細ビューに接続するための選択店舗 */
+  /** Issue 10: 詳細ビュー用の選択店舗 */
   const [selectedShop, setSelectedShop] = useState<Shop | null>(null);
+  const [detailReturnTarget, setDetailReturnTarget] =
+    useState<DetailReturnTarget>("search");
 
   const { isFavorite, toggleFavorite } = useFavorites();
+  const { recordView } = useViewHistory();
 
   const {
     lat,
@@ -441,6 +450,104 @@ export function HomeContent({
       clearSkeletonTimer();
     };
   }, [clearSkeletonTimer]);
+
+  useLayoutEffect(() => {
+    if (viewMode !== "detail" || !selectedShop) return;
+
+    scrollContainerToTop(scrollContainerRef.current);
+  }, [selectedShop, viewMode]);
+
+  useLayoutEffect(() => {
+    if (viewMode !== "search") return;
+
+    const scrollTop = pendingHomeScrollTopRef.current;
+    if (scrollTop === null) return;
+
+    pendingHomeScrollTopRef.current = null;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const restore = (): void => {
+      container.scrollTop = scrollTop;
+    };
+
+    restore();
+    requestAnimationFrame(() => {
+      restore();
+      requestAnimationFrame(restore);
+    });
+    window.setTimeout(restore, 100);
+  }, [viewMode]);
+
+  // 共有ディープリンク `?shop=<id>`: コールド起動で fetch-by-id → 詳細を直接開く
+  useEffect(() => {
+    const shopId = initialUrlState.shopId;
+    if (!shopId) return;
+
+    let active = true;
+
+    const loadSharedShop = async (): Promise<void> => {
+      try {
+        const response = await fetch(`/api/shop/${encodeURIComponent(shopId)}`, {
+          method: "GET",
+        });
+        const data = (await response.json()) as { shop?: Shop; message?: string };
+        if (!active) return;
+        if (!response.ok || !data.shop) {
+          setErrorMessage(data.message ?? TEXT.shop.sharedShopNotFound);
+          return;
+        }
+        recordView(data.shop);
+        viewModeBeforeDetailRef.current = "search";
+        setSelectedShop(data.shop);
+        setDetailReturnTarget("home");
+        setViewMode("detail");
+      } catch {
+        if (active) setErrorMessage(TEXT.shop.sharedShopNotFound);
+      }
+    };
+
+    void loadSharedShop();
+
+    return () => {
+      active = false;
+    };
+    // 初回 URL の shopId のみ対象（マウント時1回）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // コールド復元した詳細の距離を、位置取得後に補完する（1店舗1回まで）
+  useEffect(() => {
+    if (viewMode !== "detail" || !selectedShop) return;
+    if (selectedShop.distanceMeters !== null) return;
+    if (lat === null || lng === null) return;
+    if (distanceBackfilledRef.current === selectedShop.id) return;
+
+    distanceBackfilledRef.current = selectedShop.id;
+    const targetId = selectedShop.id;
+    let active = true;
+
+    void (async () => {
+      try {
+        const params = new URLSearchParams({ lat: String(lat), lng: String(lng) });
+        const response = await fetch(
+          `/api/shop/${encodeURIComponent(targetId)}?${params}`,
+          { method: "GET" },
+        );
+        const data = (await response.json()) as { shop?: Shop };
+        if (!active || !response.ok || !data.shop) return;
+        setSelectedShop((current) =>
+          current && current.id === targetId ? data.shop! : current,
+        );
+      } catch {
+        // 補完失敗は無視（距離欄は非表示のまま）
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [lat, lng, selectedShop, viewMode]);
 
   useLayoutEffect(() => {
     const cached = readSearchMastersCache();
@@ -704,7 +811,7 @@ export function HomeContent({
     }
 
     if (tab === "home") {
-      if (viewMode === "list") setViewMode("search");
+      if (viewMode === "list" || viewMode === "detail") setViewMode("search");
     } else if (tab === "search") {
       setViewMode("list");
     }
@@ -720,9 +827,37 @@ export function HomeContent({
     }
   };
 
-  const handleSelectShop = (shop: Shop): void => {
+  const handleSelectShop = (
+    shop: Shop,
+    returnTarget: DetailReturnTarget = "search",
+  ): void => {
+    if (returnTarget === "home") {
+      pendingHomeScrollTopRef.current = scrollContainerRef.current?.scrollTop ?? 0;
+    }
+    if (viewMode !== "detail") {
+      viewModeBeforeDetailRef.current = viewMode;
+    }
+    recordView(shop);
     setSelectedShop(shop);
-    // Issue 10: RestaurantDetail へ接続（selectedShop を参照）
+    setDetailReturnTarget(returnTarget);
+    setViewMode("detail");
+  };
+
+  const handleDetailBack = (): void => {
+    setSelectedShop(null);
+
+    if (detailReturnTarget === "home") {
+      setActiveTab("home");
+      setViewMode("search");
+      return;
+    }
+    if (detailReturnTarget === "search") {
+      setActiveTab("search");
+      setViewMode("list");
+      return;
+    }
+    setActiveTab(detailReturnTarget);
+    setViewMode(viewModeBeforeDetailRef.current);
   };
 
   return (
@@ -748,7 +883,7 @@ export function HomeContent({
       ) : null}
 
       <AnimatePresence>
-        {isSearchTab && conditionPanelOpen ? (
+        {isSearchTab && viewMode !== "detail" && conditionPanelOpen ? (
           <SearchConditionOverlay
             key="filter-overlay"
             open={conditionPanelOpen}
@@ -773,7 +908,6 @@ export function HomeContent({
 
       <div
         ref={scrollContainerRef}
-        data-selected-shop-id={selectedShop?.id ?? undefined}
         className="app-scroll-root relative mx-auto w-full min-w-0 max-w-[28rem]"
       >
         {showAppBar ? <div aria-hidden className="app-bar-spacer" /> : null}
@@ -781,7 +915,9 @@ export function HomeContent({
           className={cn(
             "page-shell mx-auto min-h-full w-full min-w-0",
             showAppBar && "page-shell--under-app-bar",
-            (viewMode === "search" || viewMode === "genres") &&
+            (viewMode === "detail" ||
+              viewMode === "search" ||
+              viewMode === "genres") &&
               "page-shell--flush-top",
           )}
         >
@@ -829,8 +965,8 @@ export function HomeContent({
                     void handleRecommendationLocationAction();
                   }}
                   onShowSection={handleSpecialSearch}
-                  onSelectShop={() => {
-                    /* Issue 10 で詳細を接続 */
+                  onSelectShop={(shop) => {
+                    handleSelectShop(shop, "home");
                   }}
                 />
 
@@ -976,7 +1112,7 @@ export function HomeContent({
                         isFavorite={isFavorite(shop.id)}
                         onToggleFavorite={toggleFavorite}
                         onShowDetail={() => {
-                          handleSelectShop(shop);
+                          handleSelectShop(shop, "search");
                         }}
                       />
                     ))}
@@ -1028,11 +1164,26 @@ export function HomeContent({
                 </TypographyMuted>
               </section>
             ) : null}
+
+            {viewMode === "detail" && selectedShop ? (
+              <RestaurantDetail
+                shop={selectedShop}
+                onBack={handleDetailBack}
+                isFavorite={isFavorite(selectedShop.id)}
+                onToggleFavorite={() => {
+                  toggleFavorite(selectedShop);
+                }}
+              />
+            ) : null}
           </div>
         </main>
       </div>
 
-      <BottomNav active={activeTab} onChange={handleTabChange} />
+      <BottomNav
+        active={activeTab}
+        onChange={handleTabChange}
+        hidden={viewMode === "detail" || conditionPanelOpen}
+      />
     </>
   );
 }
