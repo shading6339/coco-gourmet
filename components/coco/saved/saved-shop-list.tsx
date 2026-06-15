@@ -15,8 +15,6 @@ type SavedShopListProps = {
   emptyCtaLabel: string;
   onShowDetail: (shop: Shop) => void;
   onEmptyCta: () => void;
-  isFavorite?: (shopId: string) => boolean;
-  onToggleFavorite?: (shop: Shop) => void;
   className?: string;
 };
 
@@ -28,8 +26,6 @@ export function SavedShopList({
   emptyCtaLabel,
   onShowDetail,
   onEmptyCta,
-  isFavorite,
-  onToggleFavorite,
   className,
 }: SavedShopListProps): JSX.Element {
   if (shops.length === 0) {
@@ -59,13 +55,11 @@ export function SavedShopList({
   }
 
   return (
-    <ul className={cn("space-y-3", className)}>
+    <ul className={cn("space-y-4", className)}>
       {shops.map((shop) => (
         <li key={shop.id}>
           <RestaurantCard
             shop={shop}
-            isFavorite={isFavorite?.(shop.id)}
-            onToggleFavorite={onToggleFavorite}
             onShowDetail={() => {
               onShowDetail(shop);
             }}

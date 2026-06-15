@@ -14,6 +14,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import type { SearchRangeOption } from "@/types/search-range";
 
+export type { SearchRangeOption };
+
 type SearchRangeTabsProps = {
   value: string;
   onValueChange: (value: string) => void;

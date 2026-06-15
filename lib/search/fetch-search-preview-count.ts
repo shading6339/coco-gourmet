@@ -8,7 +8,7 @@ import {
   ORDER_BY_SORT,
 } from "@/lib/search/fetch-search-api";
 import type { ShopSearchConditions } from "@/lib/search/filter-shops";
-import type { GeoCoords } from "@/lib/search/geo-defaults";
+import type { GeoCoords } from "@/lib/search/geolocation";
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {

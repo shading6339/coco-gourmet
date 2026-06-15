@@ -89,15 +89,21 @@ export function useSearchUrlState({
       if (urlState.hasConditions) {
         syncedUrlQueryRef.current = urlQuery;
         syncedConditionsKeyRef.current = conditionsKey;
+      } else {
+        syncedUrlQueryRef.current = null;
+        syncedConditionsKeyRef.current = null;
       }
       return;
     }
 
     if (!urlState.hasConditions) {
+      const wasSearchUrl = syncedUrlQueryRef.current !== null;
       syncedUrlQueryRef.current = null;
       syncedConditionsKeyRef.current = null;
       bootstrapUrlStateRef.current = null;
-      onResetHomeRef.current();
+      if (wasSearchUrl) {
+        onResetHomeRef.current();
+      }
       return;
     }
 

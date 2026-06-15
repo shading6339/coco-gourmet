@@ -22,9 +22,7 @@ type UseLocationStateResult = {
   locationLabel: string | null;
   isResolvingInitialGeo: boolean;
   isLocating: boolean;
-  resolveBrowseCoords: (
-    options?: { tryPrecise?: boolean },
-  ) => Promise<GeoCoords | null>;
+  resolveBrowseCoords: () => Promise<GeoCoords | null>;
   resolvePreciseCoords: () => Promise<GeoCoords | null>;
   resetLocating: () => void;
 };
@@ -73,15 +71,7 @@ export function useLocationState({
           return { lat: approx.lat, lng: approx.lng };
         }
 
-        // Permissions API 非対応などで許可状態を読めない場合のフォールバック
-        const fallbackPrecise = await getCurrentPosition();
-        if (!active || !fallbackPrecise) return null;
-
-        setLat(fallbackPrecise.lat);
-        setLng(fallbackPrecise.lng);
-        setLocationSource("precise");
-        setLocationLabel(null);
-        return fallbackPrecise;
+        return null;
       } finally {
         if (active) {
           setIsResolvingInitialGeo(false);
@@ -107,46 +97,27 @@ export function useLocationState({
     [],
   );
 
-  const resolveBrowseCoords = useCallback(
-    async (
-      options: { tryPrecise?: boolean } = {},
-    ): Promise<GeoCoords | null> => {
-      if (lat !== null && lng !== null) {
-        return { lat, lng };
-      }
+  const resolveBrowseCoords = useCallback(async (): Promise<GeoCoords | null> => {
+    if (lat !== null && lng !== null) {
+      return { lat, lng };
+    }
 
-      if (initialGeoPromiseRef.current) {
-        const fromInitial = await initialGeoPromiseRef.current;
-        if (fromInitial) return fromInitial;
-      }
+    if (initialGeoPromiseRef.current) {
+      const fromInitial = await initialGeoPromiseRef.current;
+      if (fromInitial) return fromInitial;
+    }
 
-      if (lat !== null && lng !== null) {
-        return { lat, lng };
-      }
+    if (lat !== null && lng !== null) {
+      return { lat, lng };
+    }
 
-      const approx = await fetchApproximatePosition();
-      if (approx) {
-        return applyApproximateCoords(approx);
-      }
+    const approx = await fetchApproximatePosition();
+    if (approx) {
+      return applyApproximateCoords(approx);
+    }
 
-      if (options.tryPrecise) {
-        setIsLocating(true);
-        const precise = await getCurrentPosition();
-        setIsLocating(false);
-
-        if (precise) {
-          setLat(precise.lat);
-          setLng(precise.lng);
-          setLocationSource("precise");
-          setLocationLabel(null);
-          return precise;
-        }
-      }
-
-      return null;
-    },
-    [applyApproximateCoords, lat, lng],
-  );
+    return null;
+  }, [applyApproximateCoords, lat, lng]);
 
   const resolvePreciseCoords = useCallback(async (): Promise<GeoCoords | null> => {
     if (locationSource === "precise" && lat !== null && lng !== null) {
@@ -154,7 +125,11 @@ export function useLocationState({
     }
 
     setIsLocating(true);
-    const precise = await getCurrentPosition();
+    const precise = await getCurrentPosition({
+      enableHighAccuracy: true,
+      timeout: 10_000,
+      maximumAge: 0,
+    });
     setIsLocating(false);
 
     if (precise) {

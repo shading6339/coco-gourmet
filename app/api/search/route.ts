@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   getHotpepperApiKey,
   statusFromUpstreamError,
+  toPublicUpstreamErrorMessage,
 } from "@/lib/hotpepper/client";
 import { fetchGourmetSearch } from "@/lib/hotpepper/gourmet-search";
 import {
@@ -122,11 +123,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     });
 
     if (data.results.error) {
+      console.error("[api/search] upstream error", data.results.error);
       return NextResponse.json(
-        {
-          message: data.results.error.message,
-          code: data.results.error.code,
-        },
+        { message: toPublicUpstreamErrorMessage(data.results.error.code) },
         { status: statusFromUpstreamError(data.results.error.code) },
       );
     }
@@ -142,8 +141,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       shops,
     });
   } catch (error: unknown) {
-    const message =
-      error instanceof Error ? error.message : "検索処理中にエラーが発生しました。";
-    return NextResponse.json({ message }, { status: 500 });
+    console.error("[api/search] fetch failed", error);
+    return NextResponse.json(
+      {
+        message:
+          "一時的に検索できません。時間をおいて再試行してください。",
+      },
+      { status: 500 },
+    );
   }
 }
