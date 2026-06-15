@@ -16,6 +16,8 @@ import {
   CategoryBento,
   GenreGrid,
   HomeHero,
+  PullNextPageBounceShell,
+  PullNextPageRefreshFooter,
   RecommendationSections,
   RestaurantCard,
   SearchConditionOverlay,
@@ -27,15 +29,17 @@ import { AppBar } from "@/components/ui/app-bar";
 import { BottomNav, type BottomNavTab } from "@/components/ui/bottom-nav";
 import { Button } from "@/components/ui/button";
 import { LiquidGlassButton } from "@/components/ui/liquid-glass-button";
+import { PaginationBar } from "@/components/ui/pagination";
 import { Typography, TypographyMuted } from "@/components/ui/typography";
 import { SHOP_PAGE_SIZE } from "@/constants/pagination";
 import { TEXT } from "@/constants/text";
 import { useFavorites } from "@/hooks/use-favorites";
 import { useLocationState } from "@/hooks/use-location-state";
+import { usePullNextPage } from "@/hooks/use-pull-next-page";
 import { useSearchUrlState } from "@/hooks/use-search-url-state";
 import { useShopSearch } from "@/hooks/use-shop-search";
 import type { SpecialSearchOption } from "@/lib/hotpepper/masters";
-import { pageToStartIndex } from "@/lib/pagination/pagination-items";
+import { pageToStartIndex, startIndexToPage } from "@/lib/pagination/pagination-items";
 import { serializeFeatureFiltersForCache } from "@/lib/search/feature-filters";
 import { formatSearchConditionPlaceholder } from "@/lib/search/format-search-condition";
 import {
@@ -218,6 +222,7 @@ export function HomeContent({
   const {
     shops,
     total,
+    start,
     isSearching,
     budgetHistogramCounts,
     scrollAfterLoadRef,
@@ -326,6 +331,15 @@ export function HomeContent({
     void onSyncFromUrl(initialUrlState);
   }, [initialUrlState, onSyncFromUrl]);
 
+  const currentPage = useMemo(
+    () => startIndexToPage(start, SHOP_PAGE_SIZE),
+    [start],
+  );
+  const totalPages = useMemo(
+    () => (total > 0 ? Math.ceil(total / SHOP_PAGE_SIZE) : 0),
+    [total],
+  );
+
   const searchConditionPlaceholder = useMemo(
     () =>
       formatSearchConditionPlaceholder(
@@ -377,6 +391,36 @@ export function HomeContent({
     !isLocating;
   const showResultSkeleton =
     showSearchSkeleton && (isSearching || isLocating) && !needsLocationForList;
+  const hasNextPage =
+    viewMode === "list" &&
+    totalPages > 1 &&
+    currentPage < totalPages &&
+    lat !== null &&
+    lng !== null;
+
+  const pullNextPage = usePullNextPage({
+    containerRef: scrollContainerRef,
+    enabled:
+      isSearchListView &&
+      viewMode === "list" &&
+      shops.length > 0 &&
+      !isSearching &&
+      !isLocating,
+    hasNextPage,
+    resetSignal: start,
+    onLoadNext: async () => {
+      if (lat === null || lng === null || currentPage >= totalPages) return;
+      const nextPage = currentPage + 1;
+      scrollAfterLoadRef.current = false;
+      scrollContainerToTop(scrollContainerRef.current);
+      pushSearchUrl(searchConditions, nextPage);
+      await fetchShops(
+        pageToStartIndex(nextPage, SHOP_PAGE_SIZE),
+        searchOrigin ?? { lat, lng },
+        searchConditions,
+      );
+    },
+  });
 
   useLayoutEffect(() => {
     if (isSearching || !scrollAfterLoadRef.current) return;
@@ -834,6 +878,11 @@ export function HomeContent({
             ) : null}
 
             {isSearchListView ? (
+              <PullNextPageBounceShell
+                pullOffset={pullNextPage.pullOffset}
+                isPulling={pullNextPage.isPulling}
+                snapBack={pullNextPage.snapBack}
+              >
               <section className="relative min-w-0 space-y-3">
                 {!hasSearched && !isSearching && !isLocating ? (
                   <div className="flex flex-col items-center gap-3 px-4 py-16 text-center">
@@ -933,7 +982,36 @@ export function HomeContent({
                     ))}
                   </div>
                 ) : null}
+
+                {!showResultSkeleton && !isLocating ? (
+                  <PaginationBar
+                    currentPage={currentPage}
+                    totalPages={totalPages}
+                    disabled={isSearching || lat === null || lng === null}
+                    onPageChange={(page) => {
+                      const origin =
+                        searchOrigin ??
+                        (lat !== null && lng !== null ? { lat, lng } : null);
+                      if (!origin) return;
+                      pushSearchUrl(searchConditions, page);
+                      void fetchShops(
+                        pageToStartIndex(page, SHOP_PAGE_SIZE),
+                        origin,
+                        searchConditions,
+                      );
+                    }}
+                  />
+                ) : null}
+
+                <PullNextPageRefreshFooter
+                  pullOffset={pullNextPage.pullOffset}
+                  pullDistance={pullNextPage.pullDistance}
+                  isCommitted={pullNextPage.isCommitted}
+                  isRefreshing={pullNextPage.isRefreshing}
+                  hasNextPage={hasNextPage}
+                />
               </section>
+              </PullNextPageBounceShell>
             ) : null}
 
             {activeTab !== "home" && activeTab !== "search" ? (
