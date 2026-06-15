@@ -187,6 +187,7 @@ export function HomeContent({
   const searchParams = useSearchParams();
   const urlQuery = searchParams.toString();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const detailScrollRef = useRef<HTMLDivElement>(null);
   const skeletonTimerRef = useRef<number | null>(null);
   const didInitialUrlFetchRef = useRef(false);
   const pendingHomeScrollTopRef = useRef<number | null>(null);
@@ -470,7 +471,7 @@ export function HomeContent({
   useLayoutEffect(() => {
     if (viewMode !== "detail" || !selectedShop) return;
 
-    scrollContainerToTop(scrollContainerRef.current);
+    scrollContainerToTop(detailScrollRef.current);
   }, [selectedShop, viewMode]);
 
   useLayoutEffect(() => {
@@ -982,9 +983,31 @@ export function HomeContent({
         </div>
       ) : null}
 
+      {viewMode === "detail" && selectedShop ? (
+        <div
+          ref={detailScrollRef}
+          className="app-scroll-root fixed inset-0 z-20 mx-auto w-full max-w-[28rem] bg-background"
+        >
+          <main className="page-shell page-shell--flush-top mx-auto min-h-full w-full min-w-0">
+            <RestaurantDetail
+              shop={selectedShop}
+              onBack={handleDetailBack}
+              isFavorite={isFavorite(selectedShop.id)}
+              onToggleFavorite={() => {
+                toggleFavorite(selectedShop);
+              }}
+            />
+          </main>
+        </div>
+      ) : null}
+
       <div
         ref={scrollContainerRef}
-        className="app-scroll-root relative mx-auto w-full min-w-0 max-w-[28rem]"
+        className={cn(
+          "app-scroll-root relative mx-auto w-full min-w-0 max-w-[28rem]",
+          viewMode === "detail" && "pointer-events-none overflow-hidden",
+        )}
+        aria-hidden={viewMode === "detail" ? true : undefined}
       >
         {showAppBar ? <div aria-hidden className="app-bar-spacer" /> : null}
         <main
@@ -1080,6 +1103,7 @@ export function HomeContent({
 
             {errorMessage &&
             isSearchListView &&
+            viewMode === "list" &&
             !needsLocationForList ? (
               <p
                 role="alert"
@@ -1089,7 +1113,7 @@ export function HomeContent({
               </p>
             ) : null}
 
-            {isSearchListView ? (
+            {isSearchListView && viewMode === "list" ? (
               <PullNextPageBounceShell
                 pullOffset={pullNextPage.pullOffset}
                 isPulling={pullNextPage.isPulling}
@@ -1226,7 +1250,9 @@ export function HomeContent({
               </PullNextPageBounceShell>
             ) : null}
 
-            {activeTab !== "home" && activeTab !== "search" ? (
+            {activeTab !== "home" &&
+            activeTab !== "search" &&
+            viewMode !== "detail" ? (
               <section className="space-y-3 px-1 pt-4">
                 <Typography as="h1" variant="headline-md" className="font-brand">
                   {activeTab === "history"
@@ -1239,17 +1265,6 @@ export function HomeContent({
                     : TEXT.saved.favoritesEmptyDescription}
                 </TypographyMuted>
               </section>
-            ) : null}
-
-            {viewMode === "detail" && selectedShop ? (
-              <RestaurantDetail
-                shop={selectedShop}
-                onBack={handleDetailBack}
-                isFavorite={isFavorite(selectedShop.id)}
-                onToggleFavorite={() => {
-                  toggleFavorite(selectedShop);
-                }}
-              />
             ) : null}
           </div>
         </main>
