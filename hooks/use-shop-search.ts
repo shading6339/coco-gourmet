@@ -32,6 +32,7 @@ import {
   fetchBudgetHistogramCounts,
   fetchMultiTierBudgetPreview,
 } from "@/lib/search/fetch-budget-filtered-shops";
+import { fetchMapPlotShops } from "@/lib/search/fetch-map-plot-shops";
 import type { ShopSearchConditions } from "@/lib/search/filter-shops";
 import type { GeoCoords } from "@/lib/search/geolocation";
 import {
@@ -49,9 +50,12 @@ type UseShopSearchOptions = {
 
 type UseShopSearchResult = {
   shops: Shop[];
+  /** 地図プロット専用（最大40件）。リスト表示の shops とは別管理 */
+  mapShops: Shop[];
   total: number;
   start: number;
   isSearching: boolean;
+  isMapPlotLoading: boolean;
   budgetHistogramCounts: number[];
   budgetFetchStrategy: BudgetFetchStrategy;
   budgetEstimatedTotal: number | null;
@@ -63,6 +67,10 @@ type UseShopSearchResult = {
     coords: GeoCoords,
     conditions?: ShopSearchConditions,
     options?: { scrollAfterLoad?: boolean },
+  ) => Promise<void>;
+  fetchMapPlotShopsForView: (
+    coords: GeoCoords,
+    conditions?: ShopSearchConditions,
   ) => Promise<void>;
   beginListLoading: () => void;
   resetSearchListState: () => void;
@@ -80,7 +88,9 @@ export function useShopSearch({
       () => initialConditions ?? HOME_SEARCH_CONDITIONS,
     );
   const [isSearching, setIsSearching] = useState(initialIsSearching);
+  const [isMapPlotLoading, setIsMapPlotLoading] = useState(false);
   const [shops, setShops] = useState<Shop[]>([]);
+  const [mapShops, setMapShops] = useState<Shop[]>([]);
   const [budgetHistogramCounts, setBudgetHistogramCounts] = useState<number[]>(
     [],
   );
@@ -99,6 +109,7 @@ export function useShopSearch({
   const budgetHistogramKeyRef = useRef("");
   const histogramRequestIdRef = useRef(0);
   const searchRequestIdRef = useRef(0);
+  const mapPlotRequestIdRef = useRef(0);
 
   const refreshBudgetHistogram = useCallback(
     async (
@@ -147,12 +158,14 @@ export function useShopSearch({
       setIsSearching(false);
       onSetErrorMessage(null);
       setShops([]);
+      setMapShops([]);
       setBudgetHistogramCounts([]);
       budgetCatalogRef.current = [];
       budgetCatalogKeyRef.current = "";
       budgetHistogramKeyRef.current = "";
       histogramRequestIdRef.current += 1;
       searchRequestIdRef.current += 1;
+      mapPlotRequestIdRef.current += 1;
       setTotal(0);
       setStart(1);
       setSearchConditions(HOME_SEARCH_CONDITIONS);
@@ -164,12 +177,14 @@ export function useShopSearch({
 
   const beginListLoading = useCallback((): void => {
     setShops([]);
+    setMapShops([]);
     setBudgetHistogramCounts([]);
     budgetCatalogRef.current = [];
     budgetCatalogKeyRef.current = "";
     budgetHistogramKeyRef.current = "";
     histogramRequestIdRef.current += 1;
     searchRequestIdRef.current += 1;
+    mapPlotRequestIdRef.current += 1;
     setTotal(0);
     setStart(1);
   }, []);
@@ -283,17 +298,47 @@ export function useShopSearch({
     [onSetErrorMessage, refreshBudgetHistogram, searchConditions],
   );
 
+  const fetchMapPlotShopsForView = useCallback(
+    async (
+      coords: GeoCoords,
+      conditions: ShopSearchConditions = searchConditions,
+    ): Promise<void> => {
+      const requestId = ++mapPlotRequestIdRef.current;
+      const isCurrentRequest = (): boolean =>
+        requestId === mapPlotRequestIdRef.current;
+
+      setIsMapPlotLoading(true);
+
+      try {
+        const plotted = await fetchMapPlotShops(coords, conditions);
+        if (!isCurrentRequest()) return;
+        setMapShops(plotted);
+      } catch {
+        if (!isCurrentRequest()) return;
+        setMapShops([]);
+      } finally {
+        if (isCurrentRequest()) {
+          setIsMapPlotLoading(false);
+        }
+      }
+    },
+    [searchConditions],
+  );
+
   return {
     shops,
+    mapShops,
     total,
     start,
     isSearching,
+    isMapPlotLoading,
     budgetHistogramCounts,
     budgetFetchStrategy,
     budgetEstimatedTotal,
     budgetVisibleCount,
     scrollAfterLoadRef,
     fetchShops,
+    fetchMapPlotShopsForView,
     beginListLoading,
     resetSearchListState,
     setIsSearching,

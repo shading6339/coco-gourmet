@@ -51,7 +51,7 @@ export function SearchConditionPanel({
   return (
     <section
       className={cn(
-        "box-border grid w-full max-w-full min-w-0 gap-0 bg-surface",
+        "box-border grid w-full max-w-full min-w-0 gap-0",
         className,
       )}
       aria-label={TEXT.search.filterDialogTitle}

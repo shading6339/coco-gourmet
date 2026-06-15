@@ -2,9 +2,9 @@
 
 import "leaflet/dist/leaflet.css";
 
-import { useEffect, useMemo, useRef, useState, type JSX } from "react";
+import { useEffect, useMemo, useState, type JSX } from "react";
 import { MapContainer, Marker, TileLayer } from "react-leaflet";
-import { Search, SlidersHorizontal } from "lucide-react";
+import { Search } from "lucide-react";
 
 import { RestaurantCard } from "@/components/coco/shop-list/restaurant-card";
 import { LiquidGlassButton } from "@/components/ui/liquid-glass-button";
@@ -61,7 +61,10 @@ function MapControls({
   if (!movedFar && !isSearching) return null;
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-[4.75rem] z-[1000] flex justify-center">
+    <div
+      className="pointer-events-none absolute inset-x-0 z-[1000] flex justify-center"
+      style={{ top: "calc(var(--app-bar-offset) + 0.5rem)" }}
+    >
       <LiquidGlassButton
         variant="primary"
         className="pointer-events-auto h-10 gap-1.5 px-4 shadow-lg"
@@ -129,40 +132,27 @@ type ShopsMapViewProps = {
   /** 直近の検索原点（現在地 or 前回エリア検索の中心）。ボタン出現判定に使う */
   searchOrigin: GeoCoords | null;
   shops: Shop[];
-  keyword: string;
   isSearching: boolean;
   isLocating: boolean;
   onSelectShop: (shop: Shop) => void;
   onSearchHere: () => void;
   onSearchArea: (center: GeoCoords, zoom: number) => void;
-  onKeywordSubmit: (keyword: string) => void;
-  onOpenFilters: () => void;
   className?: string;
 };
 
-/** 地図タブ = 独立した検索ページ。エリア検索・キーワード・ズーム連動ピン */
+/** 地図タブ。検索・条件 UI は AppBar / SearchConditionOverlay に委譲 */
 export function ShopsMapView({
   coords,
   searchOrigin,
   shops,
-  keyword,
   isSearching,
   isLocating,
   onSelectShop,
   onSearchHere,
   onSearchArea,
-  onKeywordSubmit,
-  onOpenFilters,
   className,
 }: ShopsMapViewProps): JSX.Element {
   const [selectedShopId, setSelectedShopId] = useState<string | null>(null);
-  const [keywordInput, setKeywordInput] = useState(keyword);
-  const inputDirtyRef = useRef(false);
-
-  // 外部の keyword 変更を取り込む（自分の入力中は上書きしない）
-  useEffect(() => {
-    if (!inputDirtyRef.current) setKeywordInput(keyword);
-  }, [keyword]);
 
   const mappableShops = useMemo(
     () => shops.filter((shop) => shop.lat !== null && shop.lng !== null),
@@ -205,7 +195,7 @@ export function ShopsMapView({
   const origin = searchOrigin ?? coords;
 
   return (
-    <div className={cn("relative h-full w-full", className)}>
+    <div className={cn("search-map-fullbleed relative h-full w-full", className)}>
       <MapContainer
         center={[coords.lat, coords.lng]}
         zoom={MAP_SEARCH_INITIAL_ZOOM}
@@ -231,47 +221,14 @@ export function ShopsMapView({
         />
       </MapContainer>
 
-      {/* 上部フローティング・キーワード検索 */}
-      <div className="pointer-events-none absolute inset-x-0 top-[max(0.75rem,env(safe-area-inset-top))] z-[900] px-4">
-        <form
-          className="glass-float pointer-events-auto mx-auto flex h-12 max-w-[24rem] items-center gap-2 rounded-full px-2 pl-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            inputDirtyRef.current = false;
-            onKeywordSubmit(keywordInput.trim());
+      {selectedShop ? (
+        <div
+          className="absolute inset-x-3 z-[1000]"
+          style={{
+            bottom: "calc(var(--bottom-nav-offset) + 0.75rem)",
           }}
         >
-          <Search
-            className="size-4 shrink-0 text-muted-foreground"
-            aria-hidden
-          />
-          <input
-            type="search"
-            value={keywordInput}
-            onChange={(event) => {
-              inputDirtyRef.current = true;
-              setKeywordInput(event.target.value);
-            }}
-            placeholder={TEXT.common.mapKeywordPlaceholder}
-            enterKeyHint="search"
-            aria-label={TEXT.common.mapKeywordPlaceholder}
-            className="h-full min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground"
-          />
-          <button
-            type="button"
-            onClick={onOpenFilters}
-            aria-label={TEXT.search.openFilterPanelLabel}
-            className="flex size-9 shrink-0 items-center justify-center rounded-full bg-surface/70 text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-          >
-            <SlidersHorizontal className="size-5" aria-hidden />
-          </button>
-        </form>
-      </div>
-
-      {/* ピン選択時のミニカード（右下トグルと重ならないよう左寄せ） */}
-      {selectedShop ? (
-        <div className="absolute inset-x-3 bottom-3 right-16 z-[1000]">
-          <div className="glass-float rounded-[var(--radius-float)] p-2">
+          <div className="glass-float rounded-float p-2">
             <RestaurantCard
               shop={selectedShop}
               onShowDetail={() => {

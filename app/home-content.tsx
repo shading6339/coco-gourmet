@@ -22,6 +22,7 @@ import {
   RecommendationSections,
   RestaurantCard,
   RestaurantDetail,
+  SavedShopList,
   SearchConditionOverlay,
   SearchResultMeta,
   SkeletonCard,
@@ -228,8 +229,8 @@ export function HomeContent({
     useState<DetailReturnTarget>("search");
   const [searchView, setSearchView] = useState<SearchView>("list");
 
-  const { isFavorite, toggleFavorite } = useFavorites();
-  const { recordView } = useViewHistory();
+  const { favorites, isFavorite, toggleFavorite } = useFavorites();
+  const { history, recordView } = useViewHistory();
 
   const {
     lat,
@@ -245,12 +246,15 @@ export function HomeContent({
 
   const {
     shops,
+    mapShops,
     total,
     start,
     isSearching,
+    isMapPlotLoading,
     budgetHistogramCounts,
     scrollAfterLoadRef,
     fetchShops,
+    fetchMapPlotShopsForView,
     beginListLoading,
     resetSearchListState,
     setIsSearching,
@@ -266,6 +270,8 @@ export function HomeContent({
 
   const fetchShopsRef = useRef(fetchShops);
   fetchShopsRef.current = fetchShops;
+  const fetchMapPlotShopsForViewRef = useRef(fetchMapPlotShopsForView);
+  fetchMapPlotShopsForViewRef.current = fetchMapPlotShopsForView;
   const resolveBrowseCoordsRef = useRef(resolveBrowseCoords);
   resolveBrowseCoordsRef.current = resolveBrowseCoords;
 
@@ -408,7 +414,7 @@ export function HomeContent({
   const isSearchListView = isSearchTab && searchView === "list";
   const isSearchMapView = isSearchTab && searchView === "map";
   const hasSearched = searchOrigin !== null;
-  const showAppBar = isSearchListView && viewMode === "list";
+  const showAppBar = isSearchTab && viewMode === "list";
   const needsLocationForList =
     viewMode === "list" &&
     lat === null &&
@@ -423,6 +429,21 @@ export function HomeContent({
     currentPage < totalPages &&
     lat !== null &&
     lng !== null;
+
+  useEffect(() => {
+    if (!isSearchMapView || !hasSearched) return;
+    if (lat === null || lng === null) return;
+
+    const coords = searchOrigin ?? { lat, lng };
+    void fetchMapPlotShopsForViewRef.current(coords, searchConditions);
+  }, [
+    hasSearched,
+    isSearchMapView,
+    lat,
+    lng,
+    searchConditions,
+    searchOrigin,
+  ]);
 
   const pullNextPage = usePullNextPage({
     containerRef: scrollContainerRef,
@@ -767,26 +788,6 @@ export function HomeContent({
     void fetchShops(1, center, nextConditions);
   };
 
-  /** 地図のキーワード検索: 現在の原点で keyword 反映して再検索 */
-  const handleMapKeywordSubmit = (keyword: string): void => {
-    const origin =
-      searchOrigin ?? (lat !== null && lng !== null ? { lat, lng } : null);
-    if (!origin) {
-      void handleSearchFromHere();
-      return;
-    }
-    const nextConditions: ShopSearchConditions = {
-      ...searchConditions,
-      keyword,
-    };
-    setSearchConditions(nextConditions);
-    setSearchInput(keyword);
-    if (viewMode !== "list") setViewMode("list");
-    replaceSearchUrl(nextConditions);
-    beginResultLoadingFeedback("skeleton");
-    void fetchShops(1, origin, nextConditions);
-  };
-
   const handleCategorySearch = (category: SearchOption): void => {
     void searchFromHomeWithConditions({
       ...DEFAULT_SHOP_SEARCH_CONDITIONS,
@@ -922,7 +923,7 @@ export function HomeContent({
           onChange={setSearchInput}
           onSubmit={handleSearchSubmit}
           placeholder={searchConditionPlaceholder}
-          showBack
+          showBack={viewMode === "list"}
           onBack={handleAppBarBack}
           searchExpanded={searchExpanded}
           onSearchExpandedChange={setSearchExpanded}
@@ -958,30 +959,6 @@ export function HomeContent({
           />
         ) : null}
       </AnimatePresence>
-
-      {isSearchMapView && viewMode !== "detail" ? (
-        <div className="fixed inset-0 z-10 mx-auto w-full max-w-[28rem]">
-          <ShopsMapView
-            coords={lat !== null && lng !== null ? { lat, lng } : null}
-            searchOrigin={searchOrigin}
-            shops={shops}
-            keyword={searchConditions.keyword}
-            isSearching={isSearching}
-            isLocating={isLocating}
-            onSelectShop={(shop) => {
-              handleSelectShop(shop, "search");
-            }}
-            onSearchHere={() => {
-              void handleSearchFromHere();
-            }}
-            onSearchArea={handleSearchArea}
-            onKeywordSubmit={handleMapKeywordSubmit}
-            onOpenFilters={() => {
-              setConditionPanelOpen(true);
-            }}
-          />
-        </div>
-      ) : null}
 
       {viewMode === "detail" && selectedShop ? (
         <div
@@ -1250,20 +1227,66 @@ export function HomeContent({
               </PullNextPageBounceShell>
             ) : null}
 
-            {activeTab !== "home" &&
-            activeTab !== "search" &&
-            viewMode !== "detail" ? (
-              <section className="space-y-3 px-1 pt-4">
+            {isSearchMapView && viewMode !== "detail" ? (
+              <div className="search-map-fullbleed fixed inset-0 z-10 mx-auto w-full max-w-md">
+                <ShopsMapView
+                  coords={lat !== null && lng !== null ? { lat, lng } : null}
+                  searchOrigin={searchOrigin}
+                  shops={mapShops.length > 0 ? mapShops : shops}
+                  isSearching={isSearching || isMapPlotLoading}
+                  isLocating={isLocating}
+                  onSelectShop={(shop) => {
+                    handleSelectShop(shop, "search");
+                  }}
+                  onSearchHere={() => {
+                    void handleSearchFromHere();
+                  }}
+                  onSearchArea={handleSearchArea}
+                />
+              </div>
+            ) : null}
+
+            {activeTab === "history" && viewMode !== "detail" ? (
+              <section className="space-y-4 pt-2">
                 <Typography as="h1" variant="headline-md" className="font-brand">
-                  {activeTab === "history"
-                    ? TEXT.saved.historyTitle
-                    : TEXT.saved.favoritesTitle}
+                  {TEXT.saved.historyTitle}
                 </Typography>
-                <TypographyMuted>
-                  {activeTab === "history"
-                    ? TEXT.saved.historyEmptyDescription
-                    : TEXT.saved.favoritesEmptyDescription}
-                </TypographyMuted>
+                <SavedShopList
+                  shops={history}
+                  emptyTitle={TEXT.saved.historyEmptyTitle}
+                  emptyDescription={TEXT.saved.historyEmptyDescription}
+                  emptyCtaLabel={TEXT.hero.searchFromHereButton}
+                  isFavorite={isFavorite}
+                  onToggleFavorite={toggleFavorite}
+                  onShowDetail={(shop) => {
+                    handleSelectShop(shop, "history");
+                  }}
+                  onEmptyCta={() => {
+                    handleTabChange("home");
+                  }}
+                />
+              </section>
+            ) : null}
+
+            {activeTab === "favorites" && viewMode !== "detail" ? (
+              <section className="space-y-4 pt-2">
+                <Typography as="h1" variant="headline-md" className="font-brand">
+                  {TEXT.saved.favoritesTitle}
+                </Typography>
+                <SavedShopList
+                  shops={favorites}
+                  emptyTitle={TEXT.saved.favoritesEmptyTitle}
+                  emptyDescription={TEXT.saved.favoritesEmptyDescription}
+                  emptyCtaLabel={TEXT.hero.searchFromHereButton}
+                  isFavorite={isFavorite}
+                  onToggleFavorite={toggleFavorite}
+                  onShowDetail={(shop) => {
+                    handleSelectShop(shop, "favorites");
+                  }}
+                  onEmptyCta={() => {
+                    handleTabChange("home");
+                  }}
+                />
               </section>
             ) : null}
           </div>

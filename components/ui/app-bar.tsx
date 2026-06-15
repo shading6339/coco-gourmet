@@ -3,9 +3,12 @@
 import type { ComponentProps, FormEvent, JSX } from "react";
 import { useEffect, useRef } from "react";
 import { ArrowLeft, Search, SlidersHorizontal, X } from "lucide-react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 
-import { LIQUID_SPRING } from "@/lib/motion/liquid-spring";
+import {
+  APP_BAR_CAPSULE_CLASS,
+  LiquidCapsuleButton,
+} from "@/components/ui/liquid-capsule-button";
 import { TEXT } from "@/constants/text";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
@@ -26,33 +29,21 @@ const SEARCH_INPUT_CLASS = cn(
   "outline-none focus-visible:border-0 focus-visible:ring-0 focus-visible:shadow-none",
 );
 
-const ICON_BUTTON_CLASS = cn(
-  "flex size-10 shrink-0 items-center justify-center rounded-full text-foreground",
-  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-);
+const ICON_BUTTON_CLASS = "size-10";
 
 /** Liquid Glass の押下「潰れて広がる」を持つアイコンボタン（カプセル内要素） */
 function LiquidIconButton({
   className,
   children,
   ...props
-}: ComponentProps<typeof motion.button>): JSX.Element {
-  const reduceMotion = useReducedMotion();
+}: ComponentProps<typeof LiquidCapsuleButton>): JSX.Element {
   return (
-    <motion.button
-      type="button"
+    <LiquidCapsuleButton
       className={cn(ICON_BUTTON_CLASS, className)}
-      style={{ transformOrigin: "center bottom" }}
-      whileTap={
-        reduceMotion
-          ? undefined
-          : { scaleY: 0.9, scaleX: 1.06, transition: LIQUID_SPRING.active }
-      }
-      transition={LIQUID_SPRING.release}
       {...props}
     >
       {children}
-    </motion.button>
+    </LiquidCapsuleButton>
   );
 }
 
@@ -180,7 +171,7 @@ export function AppBar({
       data-expanded={isExpanded}
     >
       {/* L3 浮遊カプセル: 背景が透けて glass が知覚できる */}
-      <div className="glass-float box-border rounded-full px-2 py-1">
+      <div className={APP_BAR_CAPSULE_CLASS}>
         <div className={BAR_ROW_CLASS}>
           {isHome ? (
             <motion.p
@@ -267,6 +258,7 @@ export function AppBar({
 
             {showFilter && isExpanded ? (
               <LiquidIconButton
+                variant="input"
                 onClick={onFilterClick}
                 aria-label={
                   filterExpanded
@@ -275,7 +267,7 @@ export function AppBar({
                 }
                 aria-pressed={filterExpanded}
                 className={cn(
-                  "relative bg-input text-muted-foreground",
+                  "relative text-muted-foreground",
                   filterExpanded && "text-primary",
                 )}
               >
