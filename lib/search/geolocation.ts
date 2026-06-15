@@ -31,13 +31,32 @@ export async function hasGeolocationPermission(): Promise<boolean> {
 }
 
 /** 現在地を1回取得（失敗時は null） */
-export async function getCurrentPosition(): Promise<GeoCoords | null> {
+export type GetCurrentPositionOptions = {
+  enableHighAccuracy?: boolean;
+  timeout?: number;
+  maximumAge?: number;
+};
+
+const DEFAULT_POSITION_OPTIONS: Required<GetCurrentPositionOptions> = {
+  enableHighAccuracy: false,
+  timeout: 5000,
+  maximumAge: 60_000,
+};
+
+export async function getCurrentPosition(
+  options: GetCurrentPositionOptions = {},
+): Promise<GeoCoords | null> {
   if (typeof navigator === "undefined" || !navigator.geolocation) {
     return null;
   }
 
+  const positionOptions: PositionOptions = {
+    ...DEFAULT_POSITION_OPTIONS,
+    ...options,
+  };
+
   const result = await new Promise<GeolocationPosition>((resolve, reject) => {
-    navigator.geolocation.getCurrentPosition(resolve, reject);
+    navigator.geolocation.getCurrentPosition(resolve, reject, positionOptions);
   }).catch(() => null);
 
   if (!result) return null;

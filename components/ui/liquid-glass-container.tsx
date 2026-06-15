@@ -1,27 +1,42 @@
 "use client";
 
 import * as React from "react";
-import { LayoutGroup, motion, useReducedMotion, type Transition } from "motion/react";
+import {
+  LayoutGroup,
+  motion,
+  useReducedMotion,
+  type Transition,
+} from "motion/react";
 
 import { LIQUID_SPRING } from "@/lib/motion/liquid-spring";
 import { cn } from "@/lib/utils";
 
 type LiquidGlassContextValue = {
+  /** layoutId 名前空間（複数 Container が同居しても衝突しない） */
   groupId: string;
+  /** 選択インジケータのモーフ transition */
   morph: Transition;
 };
 
-const LiquidGlassContext = React.createContext<LiquidGlassContextValue | null>(null);
+const LiquidGlassContext = React.createContext<LiquidGlassContextValue | null>(
+  null,
+);
 
 let groupCounter = 0;
 
-type LiquidGlassContainerProps = { children: React.ReactNode; className?: string };
+type LiquidGlassContainerProps = {
+  children: React.ReactNode;
+  className?: string;
+};
 
 /**
  * 複数 Liquid Glass 要素の統合管理（docs/liquid-glass.md §4.2）。
  * 配下の LiquidGlassIndicator が layoutId 共有で「溶けて流れる」選択モーフを行う。
  */
-export function LiquidGlassContainer({ children, className }: LiquidGlassContainerProps): React.JSX.Element {
+export function LiquidGlassContainer({
+  children,
+  className,
+}: LiquidGlassContainerProps): React.JSX.Element {
   const reduceMotion = useReducedMotion();
   const groupId = React.useMemo(() => {
     groupCounter += 1;
@@ -29,23 +44,38 @@ export function LiquidGlassContainer({ children, className }: LiquidGlassContain
   }, []);
 
   const value = React.useMemo<LiquidGlassContextValue>(
-    () => ({ groupId, morph: reduceMotion ? { duration: 0 } : LIQUID_SPRING.morph }),
+    () => ({
+      groupId,
+      morph: reduceMotion ? { duration: 0 } : LIQUID_SPRING.morph,
+    }),
     [groupId, reduceMotion],
   );
 
   return (
     <LiquidGlassContext.Provider value={value}>
       <LayoutGroup id={groupId}>
-        <div data-slot="liquid-glass-container" className={className}>{children}</div>
+        <div data-slot="liquid-glass-container" className={className}>
+          {children}
+        </div>
       </LayoutGroup>
     </LiquidGlassContext.Provider>
   );
 }
 
-type LiquidGlassIndicatorProps = { name: string; className?: string };
+type LiquidGlassIndicatorProps = {
+  /** Container 内で一意な指標名（例: "nav-pill"）。active な箇所にのみ描画する */
+  name: string;
+  className?: string;
+};
 
-/** 選択インジケータ。active な要素内に1つだけ描画すると layoutId 経由でモーフ移動する。 */
-export function LiquidGlassIndicator({ name, className }: LiquidGlassIndicatorProps): React.JSX.Element {
+/**
+ * 選択インジケータ。active なタブ/要素の内側に1つだけ描画すると、
+ * Framer が layoutId 経由で要素間をモーフ移動させる。
+ */
+export function LiquidGlassIndicator({
+  name,
+  className,
+}: LiquidGlassIndicatorProps): React.JSX.Element {
   const ctx = React.useContext(LiquidGlassContext);
   const morph = ctx?.morph ?? LIQUID_SPRING.morph;
   const layoutId = ctx ? `${ctx.groupId}:${name}` : name;
@@ -55,7 +85,10 @@ export function LiquidGlassIndicator({ name, className }: LiquidGlassIndicatorPr
       aria-hidden
       layoutId={layoutId}
       transition={morph}
-      className={cn("pointer-events-none absolute inset-0 -z-10 rounded-full bg-primary-container", className)}
+      className={cn(
+        "pointer-events-none absolute inset-0 -z-10 rounded-full bg-primary-container",
+        className,
+      )}
     />
   );
 }

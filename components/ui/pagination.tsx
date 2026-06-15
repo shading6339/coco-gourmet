@@ -26,9 +26,9 @@ type PaginationNavButtonProps = React.ComponentProps<typeof Button> & {
   text?: string;
 };
 
-/** DS §10: タップ領域は n/max 行と同じ高さ。左右列いっぱいの幅 */
+/** DS §10: タップ領域は n/max 行と同じ高さ。左右列いっぱいの幅。ghost は DS 上 surface-muted なので、通常時は透明に上書き */
 const PAGINATION_NAV_BUTTON_CLASS =
-  "h-full min-h-0 w-full shrink-0 rounded-md px-3";
+  "h-full min-h-0 w-full shrink-0 rounded-md border-transparent bg-transparent px-3 hover:bg-surface-muted/80 active:bg-surface-muted";
 
 function PaginationPrevious({
   className,
@@ -38,7 +38,7 @@ function PaginationPrevious({
   return (
     <Button
       type="button"
-      variant="outline"
+      variant="ghost"
       size="lg"
       aria-label={text}
       className={cn(PAGINATION_NAV_BUTTON_CLASS, className)}
@@ -57,7 +57,7 @@ function PaginationNext({
   return (
     <Button
       type="button"
-      variant="outline"
+      variant="ghost"
       size="lg"
       aria-label={text}
       className={cn(PAGINATION_NAV_BUTTON_CLASS, className)}

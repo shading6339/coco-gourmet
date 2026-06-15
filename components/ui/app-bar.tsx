@@ -7,6 +7,7 @@ import { AnimatePresence, motion } from "motion/react";
 
 import {
   APP_BAR_CAPSULE_CLASS,
+  APP_BAR_CAPSULE_ROW_CLASS,
   LiquidCapsuleButton,
 } from "@/components/ui/liquid-capsule-button";
 import { TEXT } from "@/constants/text";

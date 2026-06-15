@@ -66,17 +66,17 @@ export function SearchFilterChip({
       }
       transition={LIQUID_SPRING.release}
       className={cn(
-        "relative inline-flex max-w-full items-center gap-1.5 border px-3 py-1.5 text-xs font-medium",
+        "relative isolate inline-flex max-w-full items-center gap-1.5 border px-3 py-1.5 text-xs font-medium",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
         isSingle ? "rounded-full" : "rounded-lg",
-        // 選択時の塗りは下のガラス充填レイヤで表現するため、ここは枠と文字色のみ
+        // 選択時の塗りは充填レイヤで表現（design-system: primary-container）
         active
-          ? "border-primary text-primary-foreground"
+          ? "border-primary text-primary-container-foreground"
           : "border-border bg-surface text-foreground hover:bg-surface-muted",
         className,
       )}
     >
-      {/* 選択でガラスが満ちる: layout なしの spring scale でせり上がる */}
+      {/* 選択で満ちる: layout なしの spring scale でせり上がる */}
       {active ? (
         <motion.span
           aria-hidden
@@ -84,21 +84,21 @@ export function SearchFilterChip({
           animate={{ opacity: 1, scale: 1 }}
           transition={LIQUID_SPRING.morph}
           className={cn(
-            "pointer-events-none absolute inset-0 -z-10 bg-primary",
+            "pointer-events-none absolute inset-0 z-0 bg-primary-container",
             isSingle ? "rounded-full" : "rounded-lg",
           )}
         />
       ) : null}
       {active && !isSingle ? (
-        <Check className="size-3 shrink-0" aria-hidden />
+        <Check className="relative z-10 size-3 shrink-0" aria-hidden />
       ) : null}
       {active && isSingle ? (
         <span
-          className="size-1.5 shrink-0 rounded-full bg-primary-foreground"
+          className="relative z-10 size-1.5 shrink-0 rounded-full bg-primary"
           aria-hidden
         />
       ) : null}
-      <span className="truncate">{label}</span>
+      <span className="relative z-10 truncate">{label}</span>
     </motion.button>
   );
 }

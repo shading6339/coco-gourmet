@@ -9,10 +9,29 @@ import {
   useState,
 } from "react";
 import { AnimatePresence } from "motion/react";
-import { MapPin } from "lucide-react";
-import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
-
+import { useSearchParams } from "next/navigation";
+import { cn } from "@/lib/utils";
+import { SHOP_PAGE_SIZE } from "@/constants/pagination";
+import type { SpecialSearchOption } from "@/lib/hotpepper/masters";
+import { serializeFeatureFiltersForCache } from "@/lib/search/feature-filters";
+import {
+  countActiveSearchConditions,
+  DEFAULT_SHOP_SEARCH_CONDITIONS,
+  serializeGenreCodes,
+  type SearchOption,
+  type ShopSearchConditions,
+} from "@/lib/search/filter-shops";
+import { pageToStartIndex, startIndexToPage } from "@/lib/pagination/pagination-items";
+import { scrollContainerToTop } from "@/lib/search/scroll-list-top";
+import {
+  readSearchMastersCache,
+  writeSearchMastersCache,
+} from "@/lib/search/search-masters-cache";
+import {
+  sortBudgetOptions,
+  sortGenreOptions,
+} from "@/lib/search/sort-search-options";
 import {
   CategoryBento,
   GenreGrid,
@@ -22,59 +41,34 @@ import {
   RecommendationSections,
   RestaurantCard,
   RestaurantDetail,
-  SavedShopList,
   SearchConditionOverlay,
   SearchResultMeta,
   SkeletonCard,
 } from "@/components/coco";
-import { SearchActiveChips } from "@/components/coco/shop-list/search-active-chips";
-import { SearchViewToggle } from "@/components/coco/map/search-view-toggle";
+import { formatSearchConditionPlaceholder } from "@/lib/search/format-search-condition";
+import { MapPin } from "lucide-react";
 import { AppBar } from "@/components/ui/app-bar";
 import { BottomNav, type BottomNavTab } from "@/components/ui/bottom-nav";
 import { Button } from "@/components/ui/button";
 import { LiquidGlassButton } from "@/components/ui/liquid-glass-button";
 import { PaginationBar } from "@/components/ui/pagination";
-import { Typography, TypographyMuted } from "@/components/ui/typography";
-import { SHOP_PAGE_SIZE } from "@/constants/pagination";
-import { zoomToRangeValue } from "@/constants/map";
-import { TEXT } from "@/constants/text";
+import { SavedShopList } from "@/components/coco/saved/saved-shop-list";
+import { SearchViewToggle } from "@/components/coco/map/search-view-toggle";
+import { usePullNextPage } from "@/hooks/use-pull-next-page";
 import { useFavorites } from "@/hooks/use-favorites";
 import { useLocationState } from "@/hooks/use-location-state";
-import { usePullNextPage } from "@/hooks/use-pull-next-page";
-import { useViewHistory } from "@/hooks/use-view-history";
-import { useSearchUrlState } from "@/hooks/use-search-url-state";
-import { useShopSearch } from "@/hooks/use-shop-search";
-import type { SpecialSearchOption } from "@/lib/hotpepper/masters";
-import { pageToStartIndex, startIndexToPage } from "@/lib/pagination/pagination-items";
-import { serializeFeatureFiltersForCache } from "@/lib/search/feature-filters";
-import { formatSearchConditionPlaceholder } from "@/lib/search/format-search-condition";
-import {
-  countActiveSearchConditions,
-  DEFAULT_SHOP_SEARCH_CONDITIONS,
-  serializeGenreCodes,
-  type SearchOption,
-  type ShopSearchConditions,
-} from "@/lib/search/filter-shops";
 import type { GeoCoords } from "@/lib/search/geolocation";
-import { scrollContainerToTop } from "@/lib/search/scroll-list-top";
-import {
-  buildSearchConditionChips,
-  removeSearchConditionChip,
-} from "@/lib/search/search-condition-utils";
-import {
-  readSearchMastersCache,
-  writeSearchMastersCache,
-} from "@/lib/search/search-masters-cache";
+import { zoomToRangeValue } from "@/constants/map";
+import { useShopSearch } from "@/hooks/use-shop-search";
+import { useSearchUrlState } from "@/hooks/use-search-url-state";
+import { useViewHistory } from "@/hooks/use-view-history";
+import { Typography, TypographyMuted } from "@/components/ui/typography";
+import { TEXT } from "@/constants/text";
 import {
   RANGE_OPTIONS,
   resetConditionsForHomeSearch,
   type SearchUrlState,
 } from "@/lib/search/search-url";
-import {
-  sortBudgetOptions,
-  sortGenreOptions,
-} from "@/lib/search/sort-search-options";
-import { cn } from "@/lib/utils";
 import type { RecommendationSection } from "@/types/recommendation";
 import type { Shop } from "@/types/shop";
 
@@ -86,12 +80,6 @@ const ShopsMapView = dynamic(
     ),
   { ssr: false },
 );
-
-type ViewMode = "search" | "genres" | "list" | "detail";
-type SearchView = "list" | "map";
-type DetailReturnTarget = "home" | "search" | "history" | "favorites";
-type RangeValue = (typeof RANGE_OPTIONS)[number]["value"];
-type ResultLoadingFeedback = "skeleton" | "quiet";
 
 type SearchMastersResponse = {
   genres: SearchOption[];
@@ -105,10 +93,14 @@ type RecommendationsResponse = {
   message?: string;
 };
 
-type HomeContentProps = {
-  initialUrlState: SearchUrlState;
-};
+type ViewMode = "search" | "genres" | "list" | "detail";
+type SearchView = "list" | "map";
+type DetailReturnTarget = "home" | "search" | "history" | "favorites";
 
+type RangeValue = (typeof RANGE_OPTIONS)[number]["value"];
+type ResultLoadingFeedback = "skeleton" | "quiet";
+
+const SKELETON_COUNT = 3;
 const SKELETON_DELAY_MS = 450;
 const SLOW_RANGE_VALUES = new Set(["4", "5"]);
 
@@ -181,39 +173,36 @@ function getConditionChangeLoadingFeedback(
   return "quiet";
 }
 
-/** Issue 6–7: ホーム + 検索フロー（結果リストの店舗カードは Issue 8） */
+type HomeContentProps = {
+  initialUrlState: SearchUrlState;
+};
+
 export function HomeContent({
   initialUrlState,
 }: HomeContentProps): React.JSX.Element {
   const searchParams = useSearchParams();
   const urlQuery = searchParams.toString();
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const detailScrollRef = useRef<HTMLDivElement>(null);
-  const skeletonTimerRef = useRef<number | null>(null);
-  const didInitialUrlFetchRef = useRef(false);
-  const pendingHomeScrollTopRef = useRef<number | null>(null);
-  const viewModeBeforeDetailRef = useRef<ViewMode>("search");
-  const distanceBackfilledRef = useRef<string | null>(null);
-
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>(() =>
     initialUrlState.hasConditions ? "list" : "search",
   );
+  const [selectedShop, setSelectedShop] = useState<Shop | null>(null);
+  /** 直近の検索原点。現在地検索=現在地、地図エリア検索=地図中心。ページネーション等が共有 */
   const [searchOrigin, setSearchOrigin] = useState<GeoCoords | null>(null);
+  const [detailReturnTarget, setDetailReturnTarget] =
+    useState<DetailReturnTarget>("search");
   const [searchInput, setSearchInput] = useState(
     () => initialUrlState.conditions.keyword,
   );
   const [searchExpanded, setSearchExpanded] = useState(
     () => initialUrlState.hasConditions,
   );
-  const [activeTab, setActiveTab] = useState<BottomNavTab>("home");
-  const [conditionPanelOpen, setConditionPanelOpen] = useState(false);
-  const [showSearchSkeleton, setShowSearchSkeleton] = useState(false);
   const [genreOptions, setGenreOptions] = useState<SearchOption[]>([]);
   const [budgetOptions, setBudgetOptions] = useState<SearchOption[]>([]);
   const [specialOptions, setSpecialOptions] = useState<SpecialSearchOption[]>(
     [],
   );
+
   const [isLoadingMasters, setIsLoadingMasters] = useState(true);
   const [isLoadingRecommendations, setIsLoadingRecommendations] =
     useState(false);
@@ -223,11 +212,16 @@ export function HomeContent({
   const [mastersErrorMessage, setMastersErrorMessage] = useState<string | null>(
     null,
   );
-  /** Issue 10: 詳細ビュー用の選択店舗 */
-  const [selectedShop, setSelectedShop] = useState<Shop | null>(null);
-  const [detailReturnTarget, setDetailReturnTarget] =
-    useState<DetailReturnTarget>("search");
+  const [conditionPanelOpen, setConditionPanelOpen] = useState(false);
+  const [showSearchSkeleton, setShowSearchSkeleton] = useState(false);
+  const [activeTab, setActiveTab] = useState<BottomNavTab>("home");
+  /** 検索タブ内のリスト⇄地図トグル */
   const [searchView, setSearchView] = useState<SearchView>("list");
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const pendingHomeScrollTopRef = useRef<number | null>(null);
+  const skeletonTimerRef = useRef<number | null>(null);
+  /** 履歴・お気に入りタブから詳細を開いたとき、戻り先のホーム側 viewMode を保持 */
+  const viewModeBeforeDetailRef = useRef<ViewMode>("search");
 
   const { favorites, isFavorite, toggleFavorite } = useFavorites();
   const { history, recordView } = useViewHistory();
@@ -322,13 +316,12 @@ export function HomeContent({
         SLOW_RANGE_VALUES.has(urlState.conditions.range) ? "skeleton" : "quiet",
       );
 
-      const coords = await resolveBrowseCoordsRef.current({ tryPrecise: true });
+      const coords = await resolveBrowseCoordsRef.current();
       if (!coords) {
         setIsSearching(false);
         return;
       }
 
-      setSearchOrigin(coords);
       await fetchShopsRef.current(
         pageToStartIndex(urlState.page, SHOP_PAGE_SIZE),
         coords,
@@ -346,6 +339,8 @@ export function HomeContent({
       onResetHome: resetToHome,
       onSyncFromUrl,
     });
+
+  const didInitialUrlFetchRef = useRef(false);
 
   useLayoutEffect(() => {
     if (!initialUrlState.hasConditions) return;
@@ -370,7 +365,6 @@ export function HomeContent({
     () => (total > 0 ? Math.ceil(total / SHOP_PAGE_SIZE) : 0),
     [total],
   );
-
   const searchConditionPlaceholder = useMemo(
     () =>
       formatSearchConditionPlaceholder(
@@ -385,16 +379,6 @@ export function HomeContent({
     () => countActiveSearchConditions(searchConditions),
     [searchConditions],
   );
-  const activeConditionChips = useMemo(() => {
-    const rangeLabel =
-      RANGE_OPTIONS.find((option) => option.value === searchConditions.range)
-        ?.label ?? RANGE_OPTIONS[0].label;
-    return buildSearchConditionChips(searchConditions, {
-      genres: genreOptions,
-      specials: specialOptions,
-      rangeLabel,
-    });
-  }, [genreOptions, searchConditions, specialOptions]);
   const recommendationTitle = useMemo(() => {
     if (locationSource === "precise") {
       return TEXT.recommendations.recommendationsNearby;
@@ -408,11 +392,11 @@ export function HomeContent({
     if (locationSource !== "approximate") return null;
     return TEXT.recommendations.recommendationsApproxHint;
   }, [locationSource]);
-
   const isHomeTab = activeTab === "home";
   const isSearchTab = activeTab === "search";
   const isSearchListView = isSearchTab && searchView === "list";
   const isSearchMapView = isSearchTab && searchView === "map";
+  /** 一度でも検索を実行したか（検索タブの空状態判定用） */
   const hasSearched = searchOrigin !== null;
   const showAppBar = isSearchTab && viewMode === "list";
   const needsLocationForList =
@@ -474,7 +458,7 @@ export function HomeContent({
 
     scrollAfterLoadRef.current = false;
     scrollContainerToTop(scrollContainerRef.current);
-  }, [isSearching, scrollAfterLoadRef, shops]);
+  }, [isSearching, scrollAfterLoadRef, shops, start]);
 
   useEffect(() => {
     if (isSearching || isLocating) return;
@@ -492,7 +476,7 @@ export function HomeContent({
   useLayoutEffect(() => {
     if (viewMode !== "detail" || !selectedShop) return;
 
-    scrollContainerToTop(detailScrollRef.current);
+    scrollContainerToTop(scrollContainerRef.current);
   }, [selectedShop, viewMode]);
 
   useLayoutEffect(() => {
@@ -516,6 +500,117 @@ export function HomeContent({
     });
     window.setTimeout(restore, 100);
   }, [viewMode]);
+
+  useLayoutEffect(() => {
+    const cached = readSearchMastersCache();
+    if (!cached) return;
+
+    setGenreOptions(sortGenreOptions(cached.genres));
+    setBudgetOptions(sortBudgetOptions(cached.budgets));
+    setSpecialOptions(cached.specials);
+    setIsLoadingMasters(false);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    const fetchMasters = async (): Promise<void> => {
+      const cached = readSearchMastersCache();
+      if (cached) {
+        setIsLoadingMasters(false);
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/search/masters", {
+          method: "GET",
+        });
+        const data = (await response.json()) as SearchMastersResponse;
+
+        if (!active) return;
+
+        if (!response.ok) {
+          setMastersErrorMessage(
+            data.message ?? "検索条件マスターの取得に失敗しました。",
+          );
+          return;
+        }
+
+        const genres = sortGenreOptions(data.genres ?? []);
+        const budgets = sortBudgetOptions(data.budgets ?? []);
+        const specials = data.specials ?? [];
+        writeSearchMastersCache(genres, budgets, specials);
+        setGenreOptions(genres);
+        setBudgetOptions(budgets);
+        setSpecialOptions(specials);
+        setMastersErrorMessage(null);
+      } catch {
+        if (active) {
+          setMastersErrorMessage("検索条件マスターの取得に失敗しました。");
+        }
+      } finally {
+        if (active) {
+          setIsLoadingMasters(false);
+        }
+      }
+    };
+
+    void fetchMasters();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (viewMode !== "search") {
+      return undefined;
+    }
+
+    let active = true;
+
+    const fetchRecommendations = async (): Promise<void> => {
+      if (lat === null || lng === null) {
+        if (!isResolvingInitialGeo) {
+          setRecommendationSections([]);
+        }
+        return;
+      }
+
+      setIsLoadingRecommendations(true);
+
+      try {
+        const params = new URLSearchParams({
+          lat: String(lat),
+          lng: String(lng),
+          range: DEFAULT_SHOP_SEARCH_CONDITIONS.range,
+        });
+        const response = await fetch(`/api/search/recommendations?${params}`, {
+          method: "GET",
+        });
+        const data = (await response.json()) as RecommendationsResponse;
+
+        if (!active) return;
+        if (!response.ok) return;
+
+        setRecommendationSections(data.sections ?? []);
+      } catch {
+        if (active) {
+          setRecommendationSections([]);
+        }
+      } finally {
+        if (active) {
+          setIsLoadingRecommendations(false);
+        }
+      }
+    };
+
+    void fetchRecommendations();
+
+    return () => {
+      active = false;
+    };
+  }, [isResolvingInitialGeo, lat, lng, viewMode]);
 
   // 共有ディープリンク `?shop=<id>`: コールド起動で fetch-by-id → 詳細を直接開く
   useEffect(() => {
@@ -555,6 +650,7 @@ export function HomeContent({
   }, []);
 
   // コールド復元した詳細の距離を、位置取得後に補完する（1店舗1回まで）
+  const distanceBackfilledRef = useRef<string | null>(null);
   useEffect(() => {
     if (viewMode !== "detail" || !selectedShop) return;
     if (selectedShop.distanceMeters !== null) return;
@@ -587,128 +683,12 @@ export function HomeContent({
     };
   }, [lat, lng, selectedShop, viewMode]);
 
-  useLayoutEffect(() => {
-    const cached = readSearchMastersCache();
-    if (!cached) return;
-
-    setGenreOptions(sortGenreOptions(cached.genres));
-    setBudgetOptions(sortBudgetOptions(cached.budgets));
-    setSpecialOptions(cached.specials);
-    setIsLoadingMasters(false);
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-
-    const fetchMasters = async (): Promise<void> => {
-      const cached = readSearchMastersCache();
-      if (cached) {
-        setIsLoadingMasters(false);
-        return;
-      }
-
-      try {
-        const response = await fetch("/api/search/masters", { method: "GET" });
-        const data = (await response.json()) as SearchMastersResponse;
-
-        if (!active) return;
-
-        if (!response.ok) {
-          setMastersErrorMessage(
-            data.message ?? "検索条件マスターの取得に失敗しました。",
-          );
-          return;
-        }
-
-        const genres = sortGenreOptions(data.genres ?? []);
-        const budgets = sortBudgetOptions(data.budgets ?? []);
-        const specials = data.specials ?? [];
-        writeSearchMastersCache(genres, budgets, specials);
-        setGenreOptions(genres);
-        setBudgetOptions(budgets);
-        setSpecialOptions(specials);
-        setMastersErrorMessage(null);
-      } catch {
-        if (active) {
-          setMastersErrorMessage("検索条件マスターの取得に失敗しました。");
-        }
-      } finally {
-        if (active) {
-          setIsLoadingMasters(false);
-        }
-      }
-    };
-
-    void fetchMasters();
-
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!isHomeTab || viewMode !== "search") {
-      return undefined;
-    }
-
-    let active = true;
-
-    const fetchRecommendations = async (): Promise<void> => {
-      if (lat === null || lng === null) {
-        if (!isResolvingInitialGeo) {
-          setRecommendationSections([]);
-        }
-        return;
-      }
-
-      setIsLoadingRecommendations(true);
-
-      try {
-        const params = new URLSearchParams({
-          lat: String(lat),
-          lng: String(lng),
-          range: searchConditions.range,
-        });
-        const response = await fetch(`/api/search/recommendations?${params}`, {
-          method: "GET",
-        });
-        const data = (await response.json()) as RecommendationsResponse;
-
-        if (!active) return;
-        if (!response.ok) {
-          setRecommendationSections([]);
-          return;
-        }
-
-        setRecommendationSections(data.sections ?? []);
-      } catch {
-        if (active) {
-          setRecommendationSections([]);
-        }
-      } finally {
-        if (active) {
-          setIsLoadingRecommendations(false);
-        }
-      }
-    };
-
-    void fetchRecommendations();
-
-    return () => {
-      active = false;
-    };
-  }, [
-    isHomeTab,
-    isResolvingInitialGeo,
-    lat,
-    lng,
-    searchConditions.range,
-    viewMode,
-  ]);
-
-  const startListWithConditions = (conditions: ShopSearchConditions): void => {
+  const startListWithConditions = (
+    conditions: ShopSearchConditions,
+  ): void => {
     setSearchConditions(conditions);
     pushSearchUrl(conditions);
+    // ホームからの検索は必ず「検索」タブのリストビューに着地させる
     setActiveTab("search");
     setSearchView("list");
     setViewMode("list");
@@ -731,7 +711,6 @@ export function HomeContent({
     if (!urlState.hasConditions) return;
 
     beginResultLoadingFeedback("skeleton");
-    setSearchOrigin(coords);
     await fetchShops(
       pageToStartIndex(urlState.page, SHOP_PAGE_SIZE),
       coords,
@@ -761,10 +740,7 @@ export function HomeContent({
   ): Promise<void> => {
     setErrorMessage(null);
 
-    let coords = await resolveBrowseCoords();
-    if (!coords) {
-      coords = await resolvePreciseCoords();
-    }
+    const coords = await resolveBrowseCoords();
     if (!coords) return;
 
     setSearchOrigin(coords);
@@ -773,7 +749,7 @@ export function HomeContent({
     await fetchShops(1, coords, conditions);
   };
 
-  /** 地図「このエリアを検索」: 地図中心 + ズーム連動半径で再検索 */
+  /** 地図「このエリアを検索」: 地図中心 + ズーム連動半径で再検索（一覧と連動） */
   const handleSearchArea = (center: GeoCoords, zoom: number): void => {
     setErrorMessage(null);
     const nextConditions: ShopSearchConditions = {
@@ -788,11 +764,22 @@ export function HomeContent({
     void fetchShops(1, center, nextConditions);
   };
 
+  /** 地図のキーワード検索は AppBar 経由（handleSearchSubmit）に統一 */
   const handleCategorySearch = (category: SearchOption): void => {
     void searchFromHomeWithConditions({
       ...DEFAULT_SHOP_SEARCH_CONDITIONS,
       genreCodes: [category.code],
     });
+  };
+
+  const handleShowAllGenres = (): void => {
+    setViewMode("genres");
+    scrollContainerToTop(scrollContainerRef.current);
+  };
+
+  const handleGenreGridBack = (): void => {
+    setViewMode("search");
+    scrollContainerToTop(scrollContainerRef.current);
   };
 
   const handleSpecialSearch = (special: Pick<SearchOption, "code">): void => {
@@ -802,10 +789,68 @@ export function HomeContent({
     });
   };
 
+  const handleSelectShop = (
+    shop: Shop,
+    returnTarget: DetailReturnTarget = "search",
+  ): void => {
+    if (returnTarget === "home") {
+      pendingHomeScrollTopRef.current = scrollContainerRef.current?.scrollTop ?? 0;
+    }
+    if (viewMode !== "detail") {
+      viewModeBeforeDetailRef.current = viewMode;
+    }
+    recordView(shop);
+    setSelectedShop(shop);
+    setDetailReturnTarget(returnTarget);
+    setViewMode("detail");
+  };
+
+  const handleDetailBack = (): void => {
+    setSelectedShop(null);
+
+    if (detailReturnTarget === "home") {
+      setActiveTab("home");
+      setViewMode("search");
+      return;
+    }
+    if (detailReturnTarget === "search") {
+      // searchView は触らないので、地図から開いた場合は地図ビューに戻る
+      setActiveTab("search");
+      setViewMode("list");
+      return;
+    }
+    // history / favorites
+    setActiveTab(detailReturnTarget);
+    setViewMode(viewModeBeforeDetailRef.current);
+  };
+
+  /** タブ切替時に viewMode を翻訳（ホーム=ランディング / 検索=結果） */
+  const handleTabChange = (tab: BottomNavTab): void => {
+    if (tab === activeTab) {
+      scrollContainerToTop(scrollContainerRef.current);
+      return;
+    }
+    if (tab === "home") {
+      // 検索状態(shops/conditions)は保持したままランディングを表示
+      if (viewMode === "list" || viewMode === "detail") setViewMode("search");
+    } else if (tab === "search") {
+      setViewMode("list");
+    }
+    setActiveTab(tab);
+    scrollContainerToTop(scrollContainerRef.current);
+  };
+
+  const handleAppBarBack = (): void => {
+    if (viewMode === "list") {
+      resetToHome();
+      pushHomeUrl();
+    }
+  };
+
   const applySearchConditions = useCallback(
     (
       conditions: ShopSearchConditions,
-      options: { closePanel?: boolean } = {},
+      options: { closePanel?: boolean; scrollAfterLoad?: boolean } = {},
     ): void => {
       if (options.closePanel) {
         setConditionPanelOpen(false);
@@ -814,13 +859,16 @@ export function HomeContent({
       const origin =
         searchOrigin ?? (lat !== null && lng !== null ? { lat, lng } : null);
       if (origin === null) return;
+      // 地図タブからの適用でも結果が出るよう list へ寄せる
       if (viewMode !== "list") setViewMode("list");
 
       beginResultLoadingFeedback(
         getConditionChangeLoadingFeedback(searchConditions, conditions),
       );
       replaceSearchUrl(conditions);
-      void fetchShops(1, origin, conditions);
+      void fetchShops(1, origin, conditions, {
+        scrollAfterLoad: options.scrollAfterLoad ?? false,
+      });
     },
     [
       beginResultLoadingFeedback,
@@ -858,62 +906,6 @@ export function HomeContent({
     }
   };
 
-  const handleTabChange = (tab: BottomNavTab): void => {
-    if (tab === activeTab) {
-      scrollContainerToTop(scrollContainerRef.current);
-      return;
-    }
-
-    if (tab === "home") {
-      if (viewMode === "list" || viewMode === "detail") setViewMode("search");
-    } else if (tab === "search") {
-      setViewMode("list");
-    }
-
-    setActiveTab(tab);
-    scrollContainerToTop(scrollContainerRef.current);
-  };
-
-  const handleAppBarBack = (): void => {
-    if (viewMode === "list") {
-      resetToHome();
-      pushHomeUrl();
-    }
-  };
-
-  const handleSelectShop = (
-    shop: Shop,
-    returnTarget: DetailReturnTarget = "search",
-  ): void => {
-    if (returnTarget === "home") {
-      pendingHomeScrollTopRef.current = scrollContainerRef.current?.scrollTop ?? 0;
-    }
-    if (viewMode !== "detail") {
-      viewModeBeforeDetailRef.current = viewMode;
-    }
-    recordView(shop);
-    setSelectedShop(shop);
-    setDetailReturnTarget(returnTarget);
-    setViewMode("detail");
-  };
-
-  const handleDetailBack = (): void => {
-    setSelectedShop(null);
-
-    if (detailReturnTarget === "home") {
-      setActiveTab("home");
-      setViewMode("search");
-      return;
-    }
-    if (detailReturnTarget === "search") {
-      setActiveTab("search");
-      setViewMode("list");
-      return;
-    }
-    setActiveTab(detailReturnTarget);
-    setViewMode(viewModeBeforeDetailRef.current);
-  };
-
   return (
     <>
       {showAppBar ? (
@@ -949,6 +941,7 @@ export function HomeContent({
             rangeOptions={RANGE_OPTIONS}
             genres={genreOptions}
             specials={specialOptions}
+
             budgetHistogramCounts={budgetHistogramCounts}
             mastersErrorMessage={mastersErrorMessage}
             initialTotal={total}
@@ -960,31 +953,9 @@ export function HomeContent({
         ) : null}
       </AnimatePresence>
 
-      {viewMode === "detail" && selectedShop ? (
-        <div
-          ref={detailScrollRef}
-          className="app-scroll-root fixed inset-0 z-20 mx-auto w-full max-w-[28rem] bg-background"
-        >
-          <main className="page-shell page-shell--flush-top mx-auto min-h-full w-full min-w-0">
-            <RestaurantDetail
-              shop={selectedShop}
-              onBack={handleDetailBack}
-              isFavorite={isFavorite(selectedShop.id)}
-              onToggleFavorite={() => {
-                toggleFavorite(selectedShop);
-              }}
-            />
-          </main>
-        </div>
-      ) : null}
-
       <div
         ref={scrollContainerRef}
-        className={cn(
-          "app-scroll-root relative mx-auto w-full min-w-0 max-w-[28rem]",
-          viewMode === "detail" && "pointer-events-none overflow-hidden",
-        )}
-        aria-hidden={viewMode === "detail" ? true : undefined}
+        className="app-scroll-root relative mx-auto w-full min-w-0 max-w-[28rem]"
       >
         {showAppBar ? <div aria-hidden className="app-bar-spacer" /> : null}
         <main
@@ -997,91 +968,53 @@ export function HomeContent({
               "page-shell--flush-top",
           )}
         >
-          <div className="min-w-0 space-y-10">
-            {isHomeTab && viewMode === "search" ? (
-              <>
-                <HomeHero
-                  range={searchConditions.range}
-                  onRangeChange={(value) => {
-                    setSearchConditions((current) => ({
-                      ...current,
-                      range: value as RangeValue,
-                    }));
-                  }}
-                  rangeOptions={RANGE_OPTIONS}
-                  onSearchFromHere={() => {
-                    void handleSearchFromHere();
-                  }}
-                />
+        <div className="min-w-0 space-y-10">
+        {isHomeTab && viewMode === "search" ? (
+          <>
+            <HomeHero
+              range={searchConditions.range}
+              onRangeChange={(value) => {
+                setSearchConditions((current) => ({
+                  ...current,
+                  range: value as RangeValue,
+                }));
+              }}
+              rangeOptions={RANGE_OPTIONS}
+              onSearchFromHere={() => {
+                void handleSearchFromHere();
+              }}
+            />
 
-                <CategoryBento
-                  categories={genreOptions}
-                  isLoading={isLoadingMasters}
-                  onShowAll={() => {
-                    setViewMode("genres");
-                    scrollContainerToTop(scrollContainerRef.current);
-                  }}
-                  onSelect={handleCategorySearch}
-                />
+            <CategoryBento
+              categories={genreOptions}
+              isLoading={isLoadingMasters}
+              onShowAll={handleShowAllGenres}
+              onSelect={handleCategorySearch}
+            />
 
-                <RecommendationSections
-                  sections={recommendationSections}
-                  title={recommendationTitle}
-                  hint={recommendationHint}
-                  emptyMessage={
-                    lat === null && lng === null && !isResolvingInitialGeo
-                      ? TEXT.recommendations.recommendationsEmpty
-                      : null
-                  }
-                  isLoading={isResolvingInitialGeo || isLoadingRecommendations}
-                  showLocationAction={locationSource !== "precise"}
-                  locationActionLabel={TEXT.location.usePreciseLocationButton}
-                  isLocating={isLocating}
-                  onLocationAction={() => {
-                    void handleRecommendationLocationAction();
-                  }}
-                  onShowSection={handleSpecialSearch}
-                  onSelectShop={(shop) => {
-                    handleSelectShop(shop, "home");
-                  }}
-                />
+            <RecommendationSections
+              sections={recommendationSections}
+              title={recommendationTitle}
+              hint={recommendationHint}
+              emptyMessage={
+                lat === null && lng === null && !isResolvingInitialGeo
+                  ? TEXT.recommendations.recommendationsEmpty
+                  : null
+              }
+              isLoading={isResolvingInitialGeo || isLoadingRecommendations}
+              showLocationAction={locationSource !== "precise"}
+              locationActionLabel={TEXT.location.usePreciseLocationButton}
+              isLocating={isLocating}
+              onLocationAction={() => {
+                void handleRecommendationLocationAction();
+              }}
+              onShowSection={handleSpecialSearch}
+              onSelectShop={(shop) => {
+                handleSelectShop(shop, "home");
+              }}
+            />
 
-                {errorMessage ? (
-                  <p
-                    role="alert"
-                    className="rounded-lg bg-error-container px-4 py-3 text-sm text-on-error-container"
-                  >
-                    {errorMessage}
-                  </p>
-                ) : null}
-
-                {mastersErrorMessage ? (
-                  <p
-                    role="alert"
-                    className="rounded-lg bg-error-container px-4 py-3 text-sm text-on-error-container"
-                  >
-                    {mastersErrorMessage}
-                  </p>
-                ) : null}
-              </>
-            ) : null}
-
-            {isHomeTab && viewMode === "genres" ? (
-              <GenreGrid
-                categories={genreOptions}
-                isLoading={isLoadingMasters}
-                onBack={() => {
-                  setViewMode("search");
-                  scrollContainerToTop(scrollContainerRef.current);
-                }}
-                onSelect={handleCategorySearch}
-              />
-            ) : null}
-
-            {errorMessage &&
-            isSearchListView &&
-            viewMode === "list" &&
-            !needsLocationForList ? (
+            {errorMessage ? (
               <p
                 role="alert"
                 className="rounded-lg bg-error-container px-4 py-3 text-sm text-on-error-container"
@@ -1090,209 +1023,228 @@ export function HomeContent({
               </p>
             ) : null}
 
-            {isSearchListView && viewMode === "list" ? (
-              <PullNextPageBounceShell
-                pullOffset={pullNextPage.pullOffset}
-                isPulling={pullNextPage.isPulling}
-                snapBack={pullNextPage.snapBack}
-              >
-              <section className="relative min-w-0 space-y-3">
-                {!hasSearched && !isSearching && !isLocating ? (
-                  <div className="flex flex-col items-center gap-3 px-4 py-16 text-center">
-                    <Typography as="h2" variant="headline-md" className="font-brand">
-                      {TEXT.search.searchTabEmptyTitle}
-                    </Typography>
-                    <TypographyMuted>
-                      {TEXT.search.searchTabEmptyDescription}
-                    </TypographyMuted>
-                    <LiquidGlassButton
-                      variant="primary"
-                      className="mt-2 h-12 gap-2 px-6"
-                      disabled={isLocating}
-                      onClick={() => {
-                        void handleSearchFromHere();
-                      }}
-                    >
-                      <MapPin className="size-5" aria-hidden />
-                      {TEXT.hero.searchFromHereButton}
-                    </LiquidGlassButton>
-                  </div>
-                ) : null}
+          </>
+        ) : null}
 
-                {hasSearched && !isLocating && !needsLocationForList ? (
-                  <div className="space-y-3 pt-2">
-                    <SearchResultMeta
-                      total={total}
-                      sort={searchConditions.sort}
-                      onSortChange={(sort) => {
-                        applySearchConditions({ ...searchConditions, sort });
-                      }}
-                    />
-                    {activeConditionChips.length > 0 ? (
-                      <SearchActiveChips
-                        chips={activeConditionChips}
-                        onRemove={(chip) => {
-                          applySearchConditions(
-                            removeSearchConditionChip(searchConditions, chip),
-                          );
-                        }}
-                        onClearAll={() => {
-                          applySearchConditions(DEFAULT_SHOP_SEARCH_CONDITIONS);
-                        }}
-                      />
-                    ) : null}
-                  </div>
-                ) : null}
+        {isHomeTab && viewMode === "genres" ? (
+          <GenreGrid
+            categories={genreOptions}
+            isLoading={isLoadingMasters}
+            onBack={handleGenreGridBack}
+            onSelect={handleCategorySearch}
+          />
+        ) : null}
 
-                {showResultSkeleton ? (
-                  <div className="space-y-3" aria-busy="true" aria-live="polite">
-                    {Array.from({ length: SHOP_PAGE_SIZE }, (_, index) => (
-                      <SkeletonCard key={index} delayMs={index * 120} />
-                    ))}
-                  </div>
-                ) : null}
+        {errorMessage &&
+        isSearchListView &&
+        viewMode === "list" &&
+        !needsLocationForList ? (
+          <p
+            role="alert"
+            className="rounded-lg bg-error-container px-4 py-3 text-sm text-on-error-container"
+          >
+            {errorMessage}
+          </p>
+        ) : null}
 
-                {hasSearched && needsLocationForList ? (
-                  <div className="space-y-3 rounded-lg border border-border bg-surface-muted px-4 py-4 pt-2">
-                    <p className="text-sm text-foreground">
-                      {TEXT.location.locationMissingList}
-                    </p>
-                    <Button
-                      type="button"
-                      onClick={() => {
-                        void handleListLocationResolve();
-                      }}
-                      disabled={isLocating}
-                    >
-                      {isLocating
-                        ? TEXT.location.locationLoading
-                        : TEXT.location.locationMissingListAction}
-                    </Button>
-                  </div>
-                ) : null}
-
-                {hasSearched &&
-                !needsLocationForList &&
-                !isSearching &&
-                !isLocating &&
-                !errorMessage &&
-                shops.length === 0 ? (
-                  <TypographyMuted>{TEXT.search.noResults}</TypographyMuted>
-                ) : null}
-
-                {!showResultSkeleton && !isLocating && shops.length > 0 ? (
-                  <div className="min-w-0 space-y-3">
-                    {shops.map((shop) => (
-                      <RestaurantCard
-                        key={shop.id}
-                        shop={shop}
-                        isFavorite={isFavorite(shop.id)}
-                        onToggleFavorite={toggleFavorite}
-                        onShowDetail={() => {
-                          handleSelectShop(shop, "search");
-                        }}
-                      />
-                    ))}
-                  </div>
-                ) : null}
-
-                {!showResultSkeleton && !isLocating ? (
-                  <PaginationBar
-                    currentPage={currentPage}
-                    totalPages={totalPages}
-                    disabled={isSearching || lat === null || lng === null}
-                    onPageChange={(page) => {
-                      const origin =
-                        searchOrigin ??
-                        (lat !== null && lng !== null ? { lat, lng } : null);
-                      if (!origin) return;
-                      pushSearchUrl(searchConditions, page);
-                      void fetchShops(
-                        pageToStartIndex(page, SHOP_PAGE_SIZE),
-                        origin,
-                        searchConditions,
-                      );
-                    }}
-                  />
-                ) : null}
-
-                <PullNextPageRefreshFooter
-                  pullOffset={pullNextPage.pullOffset}
-                  pullDistance={pullNextPage.pullDistance}
-                  isCommitted={pullNextPage.isCommitted}
-                  isRefreshing={pullNextPage.isRefreshing}
-                  hasNextPage={hasNextPage}
-                />
-              </section>
-              </PullNextPageBounceShell>
-            ) : null}
-
-            {isSearchMapView && viewMode !== "detail" ? (
-              <div className="search-map-fullbleed fixed inset-0 z-10 mx-auto w-full max-w-md">
-                <ShopsMapView
-                  coords={lat !== null && lng !== null ? { lat, lng } : null}
-                  searchOrigin={searchOrigin}
-                  shops={mapShops.length > 0 ? mapShops : shops}
-                  isSearching={isSearching || isMapPlotLoading}
-                  isLocating={isLocating}
-                  onSelectShop={(shop) => {
-                    handleSelectShop(shop, "search");
-                  }}
-                  onSearchHere={() => {
+        {isSearchListView && viewMode === "list" ? (
+          <PullNextPageBounceShell
+            pullOffset={pullNextPage.pullOffset}
+            isPulling={pullNextPage.isPulling}
+            snapBack={pullNextPage.snapBack}
+          >
+          <section className="relative min-w-0 space-y-3">
+            {/* 検索タブ未検索時の空状態 + 現在地CTA */}
+            {!hasSearched && !isSearching && !isLocating ? (
+              <div className="flex flex-col items-center gap-3 px-4 py-16 text-center">
+                <Typography as="h2" variant="headline-md" className="font-brand">
+                  {TEXT.search.searchTabEmptyTitle}
+                </Typography>
+                <TypographyMuted>
+                  {TEXT.search.searchTabEmptyDescription}
+                </TypographyMuted>
+                <LiquidGlassButton
+                  variant="primary"
+                  className="mt-2 h-12 gap-2 px-6"
+                  disabled={isLocating}
+                  onClick={() => {
                     void handleSearchFromHere();
                   }}
-                  onSearchArea={handleSearchArea}
+                >
+                  <MapPin className="size-5" aria-hidden />
+                  {TEXT.hero.searchFromHereButton}
+                </LiquidGlassButton>
+              </div>
+            ) : null}
+
+            {hasSearched && !isLocating && !needsLocationForList ? (
+              <div className="space-y-3 pt-2">
+                <SearchResultMeta
+                  total={total}
+                  sort={searchConditions.sort}
+                  onSortChange={(sort) => {
+                    applySearchConditions({ ...searchConditions, sort });
+                  }}
                 />
               </div>
             ) : null}
 
-            {activeTab === "history" && viewMode !== "detail" ? (
-              <section className="space-y-4 pt-2">
-                <Typography as="h1" variant="headline-md" className="font-brand">
-                  {TEXT.saved.historyTitle}
-                </Typography>
-                <SavedShopList
-                  shops={history}
-                  emptyTitle={TEXT.saved.historyEmptyTitle}
-                  emptyDescription={TEXT.saved.historyEmptyDescription}
-                  emptyCtaLabel={TEXT.hero.searchFromHereButton}
-                  isFavorite={isFavorite}
-                  onToggleFavorite={toggleFavorite}
-                  onShowDetail={(shop) => {
-                    handleSelectShop(shop, "history");
-                  }}
-                  onEmptyCta={() => {
-                    handleTabChange("home");
-                  }}
-                />
-              </section>
+            {showResultSkeleton ? (
+              <div className="space-y-4" aria-busy="true" aria-live="polite">
+                {Array.from({ length: SKELETON_COUNT }, (_, index) => (
+                  <SkeletonCard key={index} delayMs={index * 120} />
+                ))}
+              </div>
             ) : null}
 
-            {activeTab === "favorites" && viewMode !== "detail" ? (
-              <section className="space-y-4 pt-2">
-                <Typography as="h1" variant="headline-md" className="font-brand">
-                  {TEXT.saved.favoritesTitle}
-                </Typography>
-                <SavedShopList
-                  shops={favorites}
-                  emptyTitle={TEXT.saved.favoritesEmptyTitle}
-                  emptyDescription={TEXT.saved.favoritesEmptyDescription}
-                  emptyCtaLabel={TEXT.hero.searchFromHereButton}
-                  isFavorite={isFavorite}
-                  onToggleFavorite={toggleFavorite}
-                  onShowDetail={(shop) => {
-                    handleSelectShop(shop, "favorites");
+            {hasSearched && needsLocationForList ? (
+              <div className="space-y-3 rounded-lg border border-border bg-surface-muted px-4 py-4 pt-2">
+                <p className="text-sm text-foreground">
+                  {TEXT.location.locationMissingList}
+                </p>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    void handleListLocationResolve();
                   }}
-                  onEmptyCta={() => {
-                    handleTabChange("home");
-                  }}
-                />
-              </section>
+                  disabled={isLocating}
+                >
+                  {isLocating
+                    ? TEXT.location.locationLoading
+                    : TEXT.location.locationMissingListAction}
+                </Button>
+              </div>
             ) : null}
+
+            {hasSearched &&
+            !needsLocationForList &&
+            !isSearching &&
+            !isLocating &&
+            !errorMessage &&
+            shops.length === 0 ? (
+              <TypographyMuted>{TEXT.search.noResults}</TypographyMuted>
+            ) : null}
+
+            {!showResultSkeleton && !isLocating && shops.length > 0 ? (
+              <div className="min-w-0 space-y-4">
+                {shops.map((shop) => (
+                  <RestaurantCard
+                    key={shop.id}
+                    shop={shop}
+                    onShowDetail={() => {
+                      handleSelectShop(shop, "search");
+                    }}
+                  />
+                ))}
+              </div>
+            ) : null}
+
+            {!showResultSkeleton && !isLocating ? (
+              <PaginationBar
+                currentPage={currentPage}
+                totalPages={totalPages}
+                disabled={isSearching || lat === null || lng === null}
+                onPageChange={(page) => {
+                  const origin =
+                    searchOrigin ??
+                    (lat !== null && lng !== null ? { lat, lng } : null);
+                  if (!origin) return;
+                  pushSearchUrl(searchConditions, page);
+                  void fetchShops(
+                    pageToStartIndex(page, SHOP_PAGE_SIZE),
+                    origin,
+                    searchConditions,
+                  );
+                }}
+              />
+            ) : null}
+
+            <PullNextPageRefreshFooter
+              pullOffset={pullNextPage.pullOffset}
+              pullDistance={pullNextPage.pullDistance}
+              isCommitted={pullNextPage.isCommitted}
+              isRefreshing={pullNextPage.isRefreshing}
+              hasNextPage={hasNextPage}
+            />
+          </section>
+          </PullNextPageBounceShell>
+        ) : null}
+
+        {isSearchMapView && viewMode !== "detail" ? (
+          <div className="search-map-fullbleed fixed inset-0 z-10 mx-auto w-full max-w-md">
+            <ShopsMapView
+              coords={lat !== null && lng !== null ? { lat, lng } : null}
+              searchOrigin={searchOrigin}
+              shops={mapShops.length > 0 ? mapShops : shops}
+              isSearching={isSearching || isMapPlotLoading}
+              isLocating={isLocating}
+              onSelectShop={(shop) => {
+                handleSelectShop(shop, "search");
+              }}
+              onSearchHere={() => {
+                void handleSearchFromHere();
+              }}
+              onSearchArea={handleSearchArea}
+            />
           </div>
+        ) : null}
+
+        {activeTab === "history" && viewMode !== "detail" ? (
+          <section className="space-y-4 pt-2">
+            <Typography as="h1" variant="headline-md" className="font-brand">
+              {TEXT.saved.historyTitle}
+            </Typography>
+            <SavedShopList
+              shops={history}
+              emptyTitle={TEXT.saved.historyEmptyTitle}
+              emptyDescription={TEXT.saved.historyEmptyDescription}
+              emptyCtaLabel={TEXT.hero.searchFromHereButton}
+              onShowDetail={(shop) => {
+                handleSelectShop(shop, "history");
+              }}
+              onEmptyCta={() => {
+                handleTabChange("home");
+              }}
+            />
+          </section>
+        ) : null}
+
+        {activeTab === "favorites" && viewMode !== "detail" ? (
+          <section className="space-y-4 pt-2">
+            <Typography as="h1" variant="headline-md" className="font-brand">
+              {TEXT.saved.favoritesTitle}
+            </Typography>
+            <SavedShopList
+              shops={favorites}
+              emptyTitle={TEXT.saved.favoritesEmptyTitle}
+              emptyDescription={TEXT.saved.favoritesEmptyDescription}
+              emptyCtaLabel={TEXT.hero.searchFromHereButton}
+              onShowDetail={(shop) => {
+                handleSelectShop(shop, "favorites");
+              }}
+              onEmptyCta={() => {
+                handleTabChange("home");
+              }}
+            />
+          </section>
+        ) : null}
+
+        {viewMode === "detail" && selectedShop ? (
+          <RestaurantDetail
+            shop={selectedShop}
+            onBack={handleDetailBack}
+            isFavorite={isFavorite(selectedShop.id)}
+            onToggleFavorite={() => {
+              toggleFavorite(selectedShop);
+            }}
+          />
+        ) : null}
+        </div>
         </main>
+
       </div>
 
+      {/* 検索タブのリスト⇄地図 浮遊トグル（検索済み・詳細/フィルタ非表示時のみ） */}
       {isSearchTab &&
       hasSearched &&
       viewMode !== "detail" &&

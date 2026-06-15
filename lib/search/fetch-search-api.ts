@@ -4,7 +4,7 @@ import {
   type ShopSearchConditions,
   type ShopSortKey,
 } from "@/lib/search/filter-shops";
-import type { GeoCoords } from "@/lib/search/geo-defaults";
+import type { GeoCoords } from "@/lib/search/geolocation";
 import type { Shop } from "@/types/shop";
 
 export type SearchApiResponse = {

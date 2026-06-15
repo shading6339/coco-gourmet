@@ -28,9 +28,9 @@ export const OVERSCROLL_NEXT_SCROLL_JUMP_EPSILON = 2;
 /** 離してキャンセル時のスナップバック（ms） */
 export const OVERSCROLL_NEXT_SNAP_BACK_MS = 280;
 
-/** スクラブ・ページネーション・店舗カード等の操作と競合させないセレクタ */
+/** スクラブ・ページネーション操作と競合させないセレクタ */
 const OVERSCROLL_EXCLUDED_SELECTOR =
-  '[data-slot="page-scrub-trigger"], [role="slider"], [data-slot="pagination"], [data-slot="shop-list-card"], button, a, input, textarea, select, label';
+  '[data-slot="page-scrub-trigger"], [role="slider"], [data-slot="pagination"]';
 
 export type OverscrollNextPhase = "idle" | "ready" | "pulling";
 
