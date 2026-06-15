@@ -1,43 +1,73 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { AnimatePresence } from "motion/react";
+import { MapPin } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 
 import {
   CategoryBento,
   GenreGrid,
   HomeHero,
   RecommendationSections,
+  SearchConditionOverlay,
+  SearchResultMeta,
 } from "@/components/coco";
+import { SearchActiveChips } from "@/components/coco/shop-list/search-active-chips";
+import { AppBar } from "@/components/ui/app-bar";
 import { BottomNav, type BottomNavTab } from "@/components/ui/bottom-nav";
+import { Button } from "@/components/ui/button";
+import { LiquidGlassButton } from "@/components/ui/liquid-glass-button";
 import { Typography, TypographyMuted } from "@/components/ui/typography";
+import { SHOP_PAGE_SIZE } from "@/constants/pagination";
 import { TEXT } from "@/constants/text";
+import { useLocationState } from "@/hooks/use-location-state";
+import { useSearchUrlState } from "@/hooks/use-search-url-state";
+import { useShopSearch } from "@/hooks/use-shop-search";
 import type { SpecialSearchOption } from "@/lib/hotpepper/masters";
+import { pageToStartIndex } from "@/lib/pagination/pagination-items";
+import { serializeFeatureFiltersForCache } from "@/lib/search/feature-filters";
+import { formatSearchConditionPlaceholder } from "@/lib/search/format-search-condition";
 import {
+  countActiveSearchConditions,
+  DEFAULT_SHOP_SEARCH_CONDITIONS,
+  serializeGenreCodes,
   type SearchOption,
   type ShopSearchConditions,
 } from "@/lib/search/filter-shops";
+import type { GeoCoords } from "@/lib/search/geolocation";
 import { scrollContainerToTop } from "@/lib/search/scroll-list-top";
+import {
+  buildSearchConditionChips,
+  removeSearchConditionChip,
+} from "@/lib/search/search-condition-utils";
 import {
   readSearchMastersCache,
   writeSearchMastersCache,
 } from "@/lib/search/search-masters-cache";
 import {
+  RANGE_OPTIONS,
+  resetConditionsForHomeSearch,
+  type SearchUrlState,
+} from "@/lib/search/search-url";
+import {
   sortBudgetOptions,
   sortGenreOptions,
 } from "@/lib/search/sort-search-options";
-import {
-  RANGE_OPTIONS,
-  type SearchUrlState,
-} from "@/lib/search/search-url";
+import { cn } from "@/lib/utils";
 import type { RecommendationSection } from "@/types/recommendation";
+import type { Shop } from "@/types/shop";
 
-/** 位置取得前のおすすめ用（東京駅付近） */
-const DEFAULT_BROWSE_COORDS = {
-  lat: 35.6812,
-  lng: 139.7671,
-} as const;
-
-type ViewMode = "search" | "genres";
+type ViewMode = "search" | "genres" | "list";
+type RangeValue = (typeof RANGE_OPTIONS)[number]["value"];
+type ResultLoadingFeedback = "skeleton" | "quiet";
 
 type SearchMastersResponse = {
   genres: SearchOption[];
@@ -55,36 +85,320 @@ type HomeContentProps = {
   initialUrlState: SearchUrlState;
 };
 
-type RangeValue = (typeof RANGE_OPTIONS)[number]["value"];
+const SKELETON_COUNT = 3;
+const SKELETON_DELAY_MS = 450;
+const SLOW_RANGE_VALUES = new Set(["4", "5"]);
 
-/**
- * Issue 6 最小版: ホームタブ（ヒーロー・ジャンル・おすすめ）のみ。
- * 検索結果・詳細・他タブは後続 issue で拡張する。
- */
+function areFeatureFiltersEqual(
+  current: ShopSearchConditions,
+  next: ShopSearchConditions,
+): boolean {
+  return (
+    serializeFeatureFiltersForCache(current.featureFilters) ===
+    serializeFeatureFiltersForCache(next.featureFilters)
+  );
+}
+
+function areGenreCodesEqual(
+  current: ShopSearchConditions,
+  next: ShopSearchConditions,
+): boolean {
+  return (
+    serializeGenreCodes(current.genreCodes) ===
+    serializeGenreCodes(next.genreCodes)
+  );
+}
+
+function getConditionChangeLoadingFeedback(
+  current: ShopSearchConditions,
+  next: ShopSearchConditions,
+): ResultLoadingFeedback {
+  const budgetOnlyChanged =
+    current.keyword === next.keyword &&
+    current.range === next.range &&
+    areGenreCodesEqual(current, next) &&
+    current.specialCode === next.specialCode &&
+    areFeatureFiltersEqual(current, next) &&
+    current.partyCapacity === next.partyCapacity &&
+    current.sort === next.sort &&
+    current.lunchFilter === next.lunchFilter &&
+    (current.budgetMin !== next.budgetMin ||
+      current.budgetMax !== next.budgetMax);
+
+  if (budgetOnlyChanged) return "quiet";
+
+  const sortOnlyChanged =
+    current.keyword === next.keyword &&
+    current.range === next.range &&
+    areGenreCodesEqual(current, next) &&
+    current.lunchFilter === next.lunchFilter &&
+    current.budgetMin === next.budgetMin &&
+    current.budgetMax === next.budgetMax &&
+    current.specialCode === next.specialCode &&
+    areFeatureFiltersEqual(current, next) &&
+    current.partyCapacity === next.partyCapacity &&
+    current.sort !== next.sort;
+
+  if (sortOnlyChanged) return "quiet";
+
+  if (current.range !== next.range) {
+    return SLOW_RANGE_VALUES.has(next.range) ? "skeleton" : "quiet";
+  }
+
+  if (
+    current.keyword !== next.keyword ||
+    !areGenreCodesEqual(current, next) ||
+    current.specialCode !== next.specialCode ||
+    !areFeatureFiltersEqual(current, next) ||
+    current.partyCapacity !== next.partyCapacity
+  ) {
+    return "skeleton";
+  }
+
+  return "quiet";
+}
+
+/** Issue 6–7: ホーム + 検索フロー（結果リストの店舗カードは Issue 8） */
 export function HomeContent({
   initialUrlState,
 }: HomeContentProps): React.JSX.Element {
+  const searchParams = useSearchParams();
+  const urlQuery = searchParams.toString();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const [activeTab, setActiveTab] = useState<BottomNavTab>("home");
-  const [viewMode, setViewMode] = useState<ViewMode>("search");
-  const [searchConditions, setSearchConditions] =
-    useState<ShopSearchConditions>(initialUrlState.conditions);
-  const [genreOptions, setGenreOptions] = useState<SearchOption[]>([]);
-  const [isLoadingMasters, setIsLoadingMasters] = useState(true);
-  const [mastersErrorMessage, setMastersErrorMessage] = useState<string | null>(
-    null,
+  const skeletonTimerRef = useRef<number | null>(null);
+  const didInitialUrlFetchRef = useRef(false);
+
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>(() =>
+    initialUrlState.hasConditions ? "list" : "search",
   );
+  const [searchOrigin, setSearchOrigin] = useState<GeoCoords | null>(null);
+  const [searchInput, setSearchInput] = useState(
+    () => initialUrlState.conditions.keyword,
+  );
+  const [searchExpanded, setSearchExpanded] = useState(
+    () => initialUrlState.hasConditions,
+  );
+  const [activeTab, setActiveTab] = useState<BottomNavTab>("home");
+  const [conditionPanelOpen, setConditionPanelOpen] = useState(false);
+  const [showSearchSkeleton, setShowSearchSkeleton] = useState(false);
+  const [genreOptions, setGenreOptions] = useState<SearchOption[]>([]);
+  const [budgetOptions, setBudgetOptions] = useState<SearchOption[]>([]);
+  const [specialOptions, setSpecialOptions] = useState<SpecialSearchOption[]>(
+    [],
+  );
+  const [isLoadingMasters, setIsLoadingMasters] = useState(true);
+  const [isLoadingRecommendations, setIsLoadingRecommendations] =
+    useState(false);
   const [recommendationSections, setRecommendationSections] = useState<
     RecommendationSection[]
   >([]);
-  const [isLoadingRecommendations, setIsLoadingRecommendations] =
-    useState(true);
+  const [mastersErrorMessage, setMastersErrorMessage] = useState<string | null>(
+    null,
+  );
+
+  const {
+    lat,
+    lng,
+    locationSource,
+    locationLabel,
+    isResolvingInitialGeo,
+    isLocating,
+    resolveBrowseCoords,
+    resolvePreciseCoords,
+    resetLocating,
+  } = useLocationState({ onSetErrorMessage: setErrorMessage });
+
+  const {
+    shops,
+    total,
+    isSearching,
+    budgetHistogramCounts,
+    scrollAfterLoadRef,
+    fetchShops,
+    beginListLoading,
+    resetSearchListState,
+    setIsSearching,
+    setSearchConditions,
+    searchConditions,
+  } = useShopSearch({
+    onSetErrorMessage: setErrorMessage,
+    initialConditions: initialUrlState.hasConditions
+      ? initialUrlState.conditions
+      : undefined,
+    initialIsSearching: initialUrlState.hasConditions,
+  });
+
+  const fetchShopsRef = useRef(fetchShops);
+  fetchShopsRef.current = fetchShops;
+  const resolveBrowseCoordsRef = useRef(resolveBrowseCoords);
+  resolveBrowseCoordsRef.current = resolveBrowseCoords;
+
+  const clearSkeletonTimer = useCallback((): void => {
+    if (skeletonTimerRef.current === null) return;
+    window.clearTimeout(skeletonTimerRef.current);
+    skeletonTimerRef.current = null;
+  }, []);
+
+  const beginResultLoadingFeedback = useCallback(
+    (feedback: ResultLoadingFeedback): void => {
+      clearSkeletonTimer();
+      setShowSearchSkeleton(false);
+
+      if (feedback !== "skeleton") return;
+
+      skeletonTimerRef.current = window.setTimeout(() => {
+        skeletonTimerRef.current = null;
+        setShowSearchSkeleton(true);
+      }, SKELETON_DELAY_MS);
+    },
+    [clearSkeletonTimer],
+  );
+
+  const resetToHome = useCallback((): void => {
+    setActiveTab("home");
+    setViewMode("search");
+    resetLocating();
+    resetSearchListState();
+    setSearchExpanded(false);
+    setSearchInput("");
+    setConditionPanelOpen(false);
+    clearSkeletonTimer();
+    setShowSearchSkeleton(false);
+  }, [clearSkeletonTimer, resetLocating, resetSearchListState]);
+
+  const onSyncFromUrl = useCallback(
+    async (urlState: SearchUrlState): Promise<void> => {
+      setSearchConditions(urlState.conditions);
+      setSearchInput(urlState.conditions.keyword);
+      setActiveTab("search");
+      setViewMode("list");
+      setSearchExpanded(true);
+      setIsSearching(true);
+      setErrorMessage(null);
+      beginResultLoadingFeedback(
+        SLOW_RANGE_VALUES.has(urlState.conditions.range) ? "skeleton" : "quiet",
+      );
+
+      const coords = await resolveBrowseCoordsRef.current({ tryPrecise: true });
+      if (!coords) {
+        setIsSearching(false);
+        return;
+      }
+
+      setSearchOrigin(coords);
+      await fetchShopsRef.current(
+        pageToStartIndex(urlState.page, SHOP_PAGE_SIZE),
+        coords,
+        urlState.conditions,
+      );
+    },
+    [beginResultLoadingFeedback, setIsSearching, setSearchConditions],
+  );
+
+  const { pushSearchUrl, replaceSearchUrl, pushHomeUrl, parseCurrentUrl } =
+    useSearchUrlState({
+      urlQuery,
+      budgetOptions,
+      bootstrapUrlState: initialUrlState.hasConditions ? initialUrlState : null,
+      onResetHome: resetToHome,
+      onSyncFromUrl,
+    });
+
+  useLayoutEffect(() => {
+    if (!initialUrlState.hasConditions) return;
+    beginResultLoadingFeedback(
+      SLOW_RANGE_VALUES.has(initialUrlState.conditions.range)
+        ? "skeleton"
+        : "quiet",
+    );
+  }, [beginResultLoadingFeedback, initialUrlState]);
+
+  useEffect(() => {
+    if (!initialUrlState.hasConditions || didInitialUrlFetchRef.current) return;
+    didInitialUrlFetchRef.current = true;
+    void onSyncFromUrl(initialUrlState);
+  }, [initialUrlState, onSyncFromUrl]);
+
+  const searchConditionPlaceholder = useMemo(
+    () =>
+      formatSearchConditionPlaceholder(
+        searchConditions,
+        RANGE_OPTIONS,
+        genreOptions,
+        { specials: specialOptions },
+      ),
+    [genreOptions, searchConditions, specialOptions],
+  );
+  const activeConditionCount = useMemo(
+    () => countActiveSearchConditions(searchConditions),
+    [searchConditions],
+  );
+  const activeConditionChips = useMemo(() => {
+    const rangeLabel =
+      RANGE_OPTIONS.find((option) => option.value === searchConditions.range)
+        ?.label ?? RANGE_OPTIONS[0].label;
+    return buildSearchConditionChips(searchConditions, {
+      genres: genreOptions,
+      specials: specialOptions,
+      rangeLabel,
+    });
+  }, [genreOptions, searchConditions, specialOptions]);
+  const recommendationTitle = useMemo(() => {
+    if (locationSource === "precise") {
+      return TEXT.recommendations.recommendationsNearby;
+    }
+    if (locationLabel) {
+      return `${locationLabel}のおすすめ`;
+    }
+    return TEXT.recommendations.recommendationsTitle;
+  }, [locationLabel, locationSource]);
+  const recommendationHint = useMemo(() => {
+    if (locationSource !== "approximate") return null;
+    return TEXT.recommendations.recommendationsApproxHint;
+  }, [locationSource]);
+
+  const isHomeTab = activeTab === "home";
+  const isSearchTab = activeTab === "search";
+  const isSearchListView = isSearchTab && viewMode === "list";
+  const hasSearched = searchOrigin !== null;
+  const showAppBar = isSearchListView;
+  const needsLocationForList =
+    viewMode === "list" &&
+    lat === null &&
+    lng === null &&
+    !isSearching &&
+    !isLocating;
+  const showResultSkeleton =
+    showSearchSkeleton && (isSearching || isLocating) && !needsLocationForList;
+
+  useLayoutEffect(() => {
+    if (isSearching || !scrollAfterLoadRef.current) return;
+
+    scrollAfterLoadRef.current = false;
+    scrollContainerToTop(scrollContainerRef.current);
+  }, [isSearching, scrollAfterLoadRef, shops]);
+
+  useEffect(() => {
+    if (isSearching || isLocating) return;
+
+    clearSkeletonTimer();
+    setShowSearchSkeleton(false);
+  }, [clearSkeletonTimer, isLocating, isSearching]);
+
+  useEffect(() => {
+    return () => {
+      clearSkeletonTimer();
+    };
+  }, [clearSkeletonTimer]);
 
   useLayoutEffect(() => {
     const cached = readSearchMastersCache();
     if (!cached) return;
 
     setGenreOptions(sortGenreOptions(cached.genres));
+    setBudgetOptions(sortBudgetOptions(cached.budgets));
+    setSpecialOptions(cached.specials);
     setIsLoadingMasters(false);
   }, []);
 
@@ -116,6 +430,8 @@ export function HomeContent({
         const specials = data.specials ?? [];
         writeSearchMastersCache(genres, budgets, specials);
         setGenreOptions(genres);
+        setBudgetOptions(budgets);
+        setSpecialOptions(specials);
         setMastersErrorMessage(null);
       } catch {
         if (active) {
@@ -136,19 +452,26 @@ export function HomeContent({
   }, []);
 
   useEffect(() => {
-    if (activeTab !== "home" || viewMode !== "search") {
+    if (!isHomeTab || viewMode !== "search") {
       return undefined;
     }
 
     let active = true;
 
     const fetchRecommendations = async (): Promise<void> => {
+      if (lat === null || lng === null) {
+        if (!isResolvingInitialGeo) {
+          setRecommendationSections([]);
+        }
+        return;
+      }
+
       setIsLoadingRecommendations(true);
 
       try {
         const params = new URLSearchParams({
-          lat: String(DEFAULT_BROWSE_COORDS.lat),
-          lng: String(DEFAULT_BROWSE_COORDS.lng),
+          lat: String(lat),
+          lng: String(lng),
           range: searchConditions.range,
         });
         const response = await fetch(`/api/search/recommendations?${params}`, {
@@ -179,7 +502,150 @@ export function HomeContent({
     return () => {
       active = false;
     };
-  }, [activeTab, searchConditions.range, viewMode]);
+  }, [
+    isHomeTab,
+    isResolvingInitialGeo,
+    lat,
+    lng,
+    searchConditions.range,
+    viewMode,
+  ]);
+
+  const startListWithConditions = (conditions: ShopSearchConditions): void => {
+    setSearchConditions(conditions);
+    pushSearchUrl(conditions);
+    setActiveTab("search");
+    setViewMode("list");
+    setSearchInput(conditions.keyword);
+    setSearchExpanded(true);
+    beginListLoading();
+  };
+
+  const handleRecommendationLocationAction = async (): Promise<void> => {
+    setErrorMessage(null);
+    await resolvePreciseCoords();
+  };
+
+  const handleListLocationResolve = async (): Promise<void> => {
+    setErrorMessage(null);
+    const coords = await resolvePreciseCoords();
+    if (!coords) return;
+
+    const urlState = parseCurrentUrl();
+    if (!urlState.hasConditions) return;
+
+    beginResultLoadingFeedback("skeleton");
+    setSearchOrigin(coords);
+    await fetchShops(
+      pageToStartIndex(urlState.page, SHOP_PAGE_SIZE),
+      coords,
+      urlState.conditions,
+    );
+  };
+
+  const handleSearchFromHere = async (): Promise<void> => {
+    setErrorMessage(null);
+
+    const coords = await resolvePreciseCoords();
+    if (!coords) return;
+
+    const nextConditions =
+      viewMode === "search"
+        ? resetConditionsForHomeSearch(searchConditions)
+        : searchConditions;
+
+    setSearchOrigin(coords);
+    startListWithConditions(nextConditions);
+    beginResultLoadingFeedback("skeleton");
+    await fetchShops(1, coords, nextConditions);
+  };
+
+  const searchFromHomeWithConditions = async (
+    conditions: ShopSearchConditions,
+  ): Promise<void> => {
+    setErrorMessage(null);
+
+    let coords = await resolveBrowseCoords();
+    if (!coords) {
+      coords = await resolvePreciseCoords();
+    }
+    if (!coords) return;
+
+    setSearchOrigin(coords);
+    startListWithConditions(conditions);
+    beginResultLoadingFeedback("skeleton");
+    await fetchShops(1, coords, conditions);
+  };
+
+  const handleCategorySearch = (category: SearchOption): void => {
+    void searchFromHomeWithConditions({
+      ...DEFAULT_SHOP_SEARCH_CONDITIONS,
+      genreCodes: [category.code],
+    });
+  };
+
+  const handleSpecialSearch = (special: Pick<SearchOption, "code">): void => {
+    void searchFromHomeWithConditions({
+      ...DEFAULT_SHOP_SEARCH_CONDITIONS,
+      specialCode: special.code,
+    });
+  };
+
+  const applySearchConditions = useCallback(
+    (
+      conditions: ShopSearchConditions,
+      options: { closePanel?: boolean } = {},
+    ): void => {
+      if (options.closePanel) {
+        setConditionPanelOpen(false);
+      }
+      setSearchConditions(conditions);
+      const origin =
+        searchOrigin ?? (lat !== null && lng !== null ? { lat, lng } : null);
+      if (origin === null) return;
+      if (viewMode !== "list") setViewMode("list");
+
+      beginResultLoadingFeedback(
+        getConditionChangeLoadingFeedback(searchConditions, conditions),
+      );
+      replaceSearchUrl(conditions);
+      void fetchShops(1, origin, conditions);
+    },
+    [
+      beginResultLoadingFeedback,
+      fetchShops,
+      lat,
+      lng,
+      replaceSearchUrl,
+      searchConditions,
+      searchOrigin,
+      setSearchConditions,
+      viewMode,
+    ],
+  );
+
+  const handleConditionApply = (conditions: ShopSearchConditions): void => {
+    applySearchConditions(conditions, { closePanel: true });
+  };
+
+  const handleSearchSubmit = (): void => {
+    if (viewMode === "search") {
+      void handleSearchFromHere();
+      return;
+    }
+    if (viewMode === "list" && lat !== null && lng !== null) {
+      const nextConditions = {
+        ...searchConditions,
+        keyword: searchInput.trim(),
+      };
+      setSearchConditions(nextConditions);
+      beginResultLoadingFeedback(
+        getConditionChangeLoadingFeedback(searchConditions, nextConditions),
+      );
+      replaceSearchUrl(nextConditions);
+      void fetchShops(1, searchOrigin ?? { lat, lng }, nextConditions);
+    }
+  };
 
   const handleTabChange = (tab: BottomNavTab): void => {
     if (tab === activeTab) {
@@ -188,109 +654,304 @@ export function HomeContent({
     }
 
     if (tab === "home") {
-      setViewMode("search");
+      if (viewMode === "list") setViewMode("search");
+    } else if (tab === "search") {
+      setViewMode("list");
     }
 
     setActiveTab(tab);
     scrollContainerToTop(scrollContainerRef.current);
   };
 
+  const handleAppBarBack = (): void => {
+    if (viewMode === "list") {
+      resetToHome();
+      pushHomeUrl();
+    }
+  };
+
   return (
     <>
+      {showAppBar ? (
+        <AppBar
+          mode="results"
+          value={searchInput}
+          onChange={setSearchInput}
+          onSubmit={handleSearchSubmit}
+          placeholder={searchConditionPlaceholder}
+          showBack
+          onBack={handleAppBarBack}
+          searchExpanded={searchExpanded}
+          onSearchExpandedChange={setSearchExpanded}
+          showFilter
+          filterActiveCount={activeConditionCount}
+          filterExpanded={conditionPanelOpen}
+          onFilterClick={() => {
+            setConditionPanelOpen((current) => !current);
+          }}
+        />
+      ) : null}
+
+      <AnimatePresence>
+        {isSearchTab && conditionPanelOpen ? (
+          <SearchConditionOverlay
+            key="filter-overlay"
+            open={conditionPanelOpen}
+            coords={
+              searchOrigin ??
+              (lat !== null && lng !== null ? { lat, lng } : null)
+            }
+            conditions={searchConditions}
+            rangeOptions={RANGE_OPTIONS}
+            genres={genreOptions}
+            specials={specialOptions}
+            budgetHistogramCounts={budgetHistogramCounts}
+            mastersErrorMessage={mastersErrorMessage}
+            initialTotal={total}
+            onApply={handleConditionApply}
+            onClose={() => {
+              setConditionPanelOpen(false);
+            }}
+          />
+        ) : null}
+      </AnimatePresence>
+
       <div
         ref={scrollContainerRef}
         className="app-scroll-root relative mx-auto w-full min-w-0 max-w-[28rem]"
       >
-        <main className="page-shell page-shell--flush-top mx-auto min-h-full w-full min-w-0">
-          {activeTab === "home" && viewMode === "search" ? (
-            <div className="min-w-0 space-y-10">
-              <HomeHero
-                range={searchConditions.range}
-                onRangeChange={(value) => {
-                  setSearchConditions((current) => ({
-                    ...current,
-                    range: value as RangeValue,
-                  }));
-                }}
-                rangeOptions={RANGE_OPTIONS}
-                onSearchFromHere={() => {
-                  /* Issue 7 で検索フローを接続 */
-                }}
-              />
+        {showAppBar ? <div aria-hidden className="app-bar-spacer" /> : null}
+        <main
+          className={cn(
+            "page-shell mx-auto min-h-full w-full min-w-0",
+            showAppBar && "page-shell--under-app-bar",
+            (viewMode === "search" || viewMode === "genres") &&
+              "page-shell--flush-top",
+          )}
+        >
+          <div className="min-w-0 space-y-10">
+            {isHomeTab && viewMode === "search" ? (
+              <>
+                <HomeHero
+                  range={searchConditions.range}
+                  onRangeChange={(value) => {
+                    setSearchConditions((current) => ({
+                      ...current,
+                      range: value as RangeValue,
+                    }));
+                  }}
+                  rangeOptions={RANGE_OPTIONS}
+                  onSearchFromHere={() => {
+                    void handleSearchFromHere();
+                  }}
+                />
 
-              <CategoryBento
+                <CategoryBento
+                  categories={genreOptions}
+                  isLoading={isLoadingMasters}
+                  onShowAll={() => {
+                    setViewMode("genres");
+                    scrollContainerToTop(scrollContainerRef.current);
+                  }}
+                  onSelect={handleCategorySearch}
+                />
+
+                <RecommendationSections
+                  sections={recommendationSections}
+                  title={recommendationTitle}
+                  hint={recommendationHint}
+                  emptyMessage={
+                    lat === null && lng === null && !isResolvingInitialGeo
+                      ? TEXT.recommendations.recommendationsEmpty
+                      : null
+                  }
+                  isLoading={isResolvingInitialGeo || isLoadingRecommendations}
+                  showLocationAction={locationSource !== "precise"}
+                  locationActionLabel={TEXT.location.usePreciseLocationButton}
+                  isLocating={isLocating}
+                  onLocationAction={() => {
+                    void handleRecommendationLocationAction();
+                  }}
+                  onShowSection={handleSpecialSearch}
+                  onSelectShop={() => {
+                    /* Issue 10 で詳細を接続 */
+                  }}
+                />
+
+                {errorMessage ? (
+                  <p
+                    role="alert"
+                    className="rounded-lg bg-error-container px-4 py-3 text-sm text-on-error-container"
+                  >
+                    {errorMessage}
+                  </p>
+                ) : null}
+
+                {mastersErrorMessage ? (
+                  <p
+                    role="alert"
+                    className="rounded-lg bg-error-container px-4 py-3 text-sm text-on-error-container"
+                  >
+                    {mastersErrorMessage}
+                  </p>
+                ) : null}
+              </>
+            ) : null}
+
+            {isHomeTab && viewMode === "genres" ? (
+              <GenreGrid
                 categories={genreOptions}
                 isLoading={isLoadingMasters}
-                onShowAll={() => {
-                  setViewMode("genres");
+                onBack={() => {
+                  setViewMode("search");
                   scrollContainerToTop(scrollContainerRef.current);
                 }}
-                onSelect={() => {
-                  /* Issue 7 でジャンル検索を接続 */
-                }}
+                onSelect={handleCategorySearch}
               />
+            ) : null}
 
-              <RecommendationSections
-                sections={recommendationSections}
-                title={TEXT.recommendations.recommendationsNearby}
-                hint={TEXT.recommendations.recommendationsApproxHint}
-                isLoading={isLoadingRecommendations}
-                showLocationAction
-                locationActionLabel={TEXT.location.usePreciseLocationButton}
-                onLocationAction={() => {
-                  /* Issue 11 で位置取得を接続 */
-                }}
-                onShowSection={() => {
-                  /* Issue 7 で特集検索を接続 */
-                }}
-                onSelectShop={() => {
-                  /* Issue 10 で詳細を接続 */
-                }}
-              />
+            {errorMessage &&
+            isSearchListView &&
+            !needsLocationForList ? (
+              <p
+                role="alert"
+                className="rounded-lg bg-error-container px-4 py-3 text-sm text-on-error-container"
+              >
+                {errorMessage}
+              </p>
+            ) : null}
 
-              {mastersErrorMessage ? (
-                <p
-                  role="alert"
-                  className="rounded-lg bg-error-container px-4 py-3 text-sm text-on-error-container"
-                >
-                  {mastersErrorMessage}
-                </p>
-              ) : null}
-            </div>
-          ) : null}
+            {isSearchListView ? (
+              <section className="relative min-w-0 space-y-3">
+                {!hasSearched && !isSearching && !isLocating ? (
+                  <div className="flex flex-col items-center gap-3 px-4 py-16 text-center">
+                    <Typography as="h2" variant="headline-md" className="font-brand">
+                      {TEXT.search.searchTabEmptyTitle}
+                    </Typography>
+                    <TypographyMuted>
+                      {TEXT.search.searchTabEmptyDescription}
+                    </TypographyMuted>
+                    <LiquidGlassButton
+                      variant="primary"
+                      className="mt-2 h-12 gap-2 px-6"
+                      disabled={isLocating}
+                      onClick={() => {
+                        void handleSearchFromHere();
+                      }}
+                    >
+                      <MapPin className="size-5" aria-hidden />
+                      {TEXT.hero.searchFromHereButton}
+                    </LiquidGlassButton>
+                  </div>
+                ) : null}
 
-          {activeTab === "home" && viewMode === "genres" ? (
-            <GenreGrid
-              categories={genreOptions}
-              isLoading={isLoadingMasters}
-              onBack={() => {
-                setViewMode("search");
-                scrollContainerToTop(scrollContainerRef.current);
-              }}
-              onSelect={() => {
-                /* Issue 7 でジャンル検索を接続 */
-              }}
-            />
-          ) : null}
+                {hasSearched && !isLocating && !needsLocationForList ? (
+                  <div className="space-y-3 pt-2">
+                    <SearchResultMeta
+                      total={total}
+                      sort={searchConditions.sort}
+                      onSortChange={(sort) => {
+                        applySearchConditions({ ...searchConditions, sort });
+                      }}
+                    />
+                    {activeConditionChips.length > 0 ? (
+                      <SearchActiveChips
+                        chips={activeConditionChips}
+                        onRemove={(chip) => {
+                          applySearchConditions(
+                            removeSearchConditionChip(searchConditions, chip),
+                          );
+                        }}
+                        onClearAll={() => {
+                          applySearchConditions(DEFAULT_SHOP_SEARCH_CONDITIONS);
+                        }}
+                      />
+                    ) : null}
+                  </div>
+                ) : null}
 
-          {activeTab !== "home" ? (
-            <section className="space-y-3 px-1 pt-4">
-              <Typography as="h1" variant="headline-md" className="font-brand">
-                {activeTab === "search"
-                  ? TEXT.common.navSearch
-                  : activeTab === "history"
+                {showResultSkeleton ? (
+                  <div className="space-y-4" aria-busy="true" aria-live="polite">
+                    {Array.from({ length: SKELETON_COUNT }, (_, index) => (
+                      <div
+                        key={index}
+                        className="skeleton h-28 w-full rounded-lg"
+                        style={{ animationDelay: `${index * 120}ms` }}
+                        aria-hidden
+                      />
+                    ))}
+                  </div>
+                ) : null}
+
+                {hasSearched && needsLocationForList ? (
+                  <div className="space-y-3 rounded-lg border border-border bg-surface-muted px-4 py-4 pt-2">
+                    <p className="text-sm text-foreground">
+                      {TEXT.location.locationMissingList}
+                    </p>
+                    <Button
+                      type="button"
+                      onClick={() => {
+                        void handleListLocationResolve();
+                      }}
+                      disabled={isLocating}
+                    >
+                      {isLocating
+                        ? TEXT.location.locationLoading
+                        : TEXT.location.locationMissingListAction}
+                    </Button>
+                  </div>
+                ) : null}
+
+                {hasSearched &&
+                !needsLocationForList &&
+                !isSearching &&
+                !isLocating &&
+                !errorMessage &&
+                shops.length === 0 ? (
+                  <TypographyMuted>{TEXT.search.noResults}</TypographyMuted>
+                ) : null}
+
+                {!showResultSkeleton && !isLocating && shops.length > 0 ? (
+                  <div className="min-w-0 space-y-3">
+                    {shops.map((shop: Shop) => (
+                      <article
+                        key={shop.id}
+                        className="rounded-lg bg-surface p-4 ring-1 ring-foreground/6 shadow-[var(--shadow-card)]"
+                      >
+                        <p className="font-medium text-foreground">{shop.name}</p>
+                        {shop.genreName ? (
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            {shop.genreName}
+                          </p>
+                        ) : null}
+                        {shop.distanceMeters !== null ? (
+                          <p className="mt-1 text-xs tabular-nums text-muted-foreground">
+                            {shop.distanceMeters.toLocaleString("ja-JP")}
+                            {TEXT.common.rangeUnit}
+                          </p>
+                        ) : null}
+                      </article>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+
+            {activeTab !== "home" && activeTab !== "search" ? (
+              <section className="space-y-3 px-1 pt-4">
+                <Typography as="h1" variant="headline-md" className="font-brand">
+                  {activeTab === "history"
                     ? TEXT.saved.historyTitle
                     : TEXT.saved.favoritesTitle}
-              </Typography>
-              <TypographyMuted>
-                {activeTab === "search"
-                  ? TEXT.search.searchTabEmptyDescription
-                  : activeTab === "history"
+                </Typography>
+                <TypographyMuted>
+                  {activeTab === "history"
                     ? TEXT.saved.historyEmptyDescription
                     : TEXT.saved.favoritesEmptyDescription}
-              </TypographyMuted>
-            </section>
-          ) : null}
+                </TypographyMuted>
+              </section>
+            ) : null}
+          </div>
         </main>
       </div>
 
