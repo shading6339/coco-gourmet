@@ -22,6 +22,7 @@ import {
   RecommendationSections,
   RestaurantCard,
   RestaurantDetail,
+  SavedShopList,
   SearchConditionOverlay,
   SearchResultMeta,
   SkeletonCard,
@@ -228,8 +229,8 @@ export function HomeContent({
     useState<DetailReturnTarget>("search");
   const [searchView, setSearchView] = useState<SearchView>("list");
 
-  const { isFavorite, toggleFavorite } = useFavorites();
-  const { recordView } = useViewHistory();
+  const { favorites, isFavorite, toggleFavorite } = useFavorites();
+  const { history, recordView } = useViewHistory();
 
   const {
     lat,
@@ -1250,20 +1251,47 @@ export function HomeContent({
               </PullNextPageBounceShell>
             ) : null}
 
-            {activeTab !== "home" &&
-            activeTab !== "search" &&
-            viewMode !== "detail" ? (
-              <section className="space-y-3 px-1 pt-4">
+            {activeTab === "history" && viewMode !== "detail" ? (
+              <section className="space-y-4 pt-2">
                 <Typography as="h1" variant="headline-md" className="font-brand">
-                  {activeTab === "history"
-                    ? TEXT.saved.historyTitle
-                    : TEXT.saved.favoritesTitle}
+                  {TEXT.saved.historyTitle}
                 </Typography>
-                <TypographyMuted>
-                  {activeTab === "history"
-                    ? TEXT.saved.historyEmptyDescription
-                    : TEXT.saved.favoritesEmptyDescription}
-                </TypographyMuted>
+                <SavedShopList
+                  shops={history}
+                  emptyTitle={TEXT.saved.historyEmptyTitle}
+                  emptyDescription={TEXT.saved.historyEmptyDescription}
+                  emptyCtaLabel={TEXT.hero.searchFromHereButton}
+                  isFavorite={isFavorite}
+                  onToggleFavorite={toggleFavorite}
+                  onShowDetail={(shop) => {
+                    handleSelectShop(shop, "history");
+                  }}
+                  onEmptyCta={() => {
+                    handleTabChange("home");
+                  }}
+                />
+              </section>
+            ) : null}
+
+            {activeTab === "favorites" && viewMode !== "detail" ? (
+              <section className="space-y-4 pt-2">
+                <Typography as="h1" variant="headline-md" className="font-brand">
+                  {TEXT.saved.favoritesTitle}
+                </Typography>
+                <SavedShopList
+                  shops={favorites}
+                  emptyTitle={TEXT.saved.favoritesEmptyTitle}
+                  emptyDescription={TEXT.saved.favoritesEmptyDescription}
+                  emptyCtaLabel={TEXT.hero.searchFromHereButton}
+                  isFavorite={isFavorite}
+                  onToggleFavorite={toggleFavorite}
+                  onShowDetail={(shop) => {
+                    handleSelectShop(shop, "favorites");
+                  }}
+                  onEmptyCta={() => {
+                    handleTabChange("home");
+                  }}
+                />
               </section>
             ) : null}
           </div>

@@ -8,5 +8,6 @@ export { SearchResultMeta } from "@/components/coco/shop-list/search-result-meta
 export { PullNextPageBounceShell } from "@/components/coco/pull-next/pull-next-page-bounce-shell";
 export { PullNextPageRefreshFooter } from "@/components/coco/pull-next/pull-next-page-refresh-footer";
 export { RestaurantDetail } from "@/components/coco/shop-detail/shop-detail";
+export { SavedShopList } from "@/components/coco/saved/saved-shop-list";
 export { RestaurantCard } from "@/components/coco/shop-list/restaurant-card";
 export { SkeletonCard } from "@/components/coco/shop-list/skeleton-card";
