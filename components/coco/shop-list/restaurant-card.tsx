@@ -60,6 +60,7 @@ export function RestaurantCard({
 
       <button
         type="button"
+        data-slot="shop-list-card"
         onClick={onShowDetail}
         className={cn(
           RESTAURANT_LIST_CARD_GRID,

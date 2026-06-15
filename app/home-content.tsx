@@ -11,6 +11,7 @@ import {
 import { AnimatePresence } from "motion/react";
 import { MapPin } from "lucide-react";
 import { useSearchParams } from "next/navigation";
+import dynamic from "next/dynamic";
 
 import {
   CategoryBento,
@@ -26,6 +27,7 @@ import {
   SkeletonCard,
 } from "@/components/coco";
 import { SearchActiveChips } from "@/components/coco/shop-list/search-active-chips";
+import { SearchViewToggle } from "@/components/coco/map/search-view-toggle";
 import { AppBar } from "@/components/ui/app-bar";
 import { BottomNav, type BottomNavTab } from "@/components/ui/bottom-nav";
 import { Button } from "@/components/ui/button";
@@ -33,6 +35,7 @@ import { LiquidGlassButton } from "@/components/ui/liquid-glass-button";
 import { PaginationBar } from "@/components/ui/pagination";
 import { Typography, TypographyMuted } from "@/components/ui/typography";
 import { SHOP_PAGE_SIZE } from "@/constants/pagination";
+import { zoomToRangeValue } from "@/constants/map";
 import { TEXT } from "@/constants/text";
 import { useFavorites } from "@/hooks/use-favorites";
 import { useLocationState } from "@/hooks/use-location-state";
@@ -74,7 +77,17 @@ import { cn } from "@/lib/utils";
 import type { RecommendationSection } from "@/types/recommendation";
 import type { Shop } from "@/types/shop";
 
+/** Leaflet は SSR 不可のためタブ初表示まで遅延ロード */
+const ShopsMapView = dynamic(
+  () =>
+    import("@/components/coco/map/shops-map-view").then(
+      (mod) => mod.ShopsMapView,
+    ),
+  { ssr: false },
+);
+
 type ViewMode = "search" | "genres" | "list" | "detail";
+type SearchView = "list" | "map";
 type DetailReturnTarget = "home" | "search" | "history" | "favorites";
 type RangeValue = (typeof RANGE_OPTIONS)[number]["value"];
 type ResultLoadingFeedback = "skeleton" | "quiet";
@@ -174,6 +187,7 @@ export function HomeContent({
   const searchParams = useSearchParams();
   const urlQuery = searchParams.toString();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const detailScrollRef = useRef<HTMLDivElement>(null);
   const skeletonTimerRef = useRef<number | null>(null);
   const didInitialUrlFetchRef = useRef(false);
   const pendingHomeScrollTopRef = useRef<number | null>(null);
@@ -212,6 +226,7 @@ export function HomeContent({
   const [selectedShop, setSelectedShop] = useState<Shop | null>(null);
   const [detailReturnTarget, setDetailReturnTarget] =
     useState<DetailReturnTarget>("search");
+  const [searchView, setSearchView] = useState<SearchView>("list");
 
   const { isFavorite, toggleFavorite } = useFavorites();
   const { recordView } = useViewHistory();
@@ -292,6 +307,7 @@ export function HomeContent({
       setSearchConditions(urlState.conditions);
       setSearchInput(urlState.conditions.keyword);
       setActiveTab("search");
+      setSearchView("list");
       setViewMode("list");
       setSearchExpanded(true);
       setIsSearching(true);
@@ -389,9 +405,10 @@ export function HomeContent({
 
   const isHomeTab = activeTab === "home";
   const isSearchTab = activeTab === "search";
-  const isSearchListView = isSearchTab && viewMode === "list";
+  const isSearchListView = isSearchTab && searchView === "list";
+  const isSearchMapView = isSearchTab && searchView === "map";
   const hasSearched = searchOrigin !== null;
-  const showAppBar = isSearchListView;
+  const showAppBar = isSearchListView && viewMode === "list";
   const needsLocationForList =
     viewMode === "list" &&
     lat === null &&
@@ -454,7 +471,7 @@ export function HomeContent({
   useLayoutEffect(() => {
     if (viewMode !== "detail" || !selectedShop) return;
 
-    scrollContainerToTop(scrollContainerRef.current);
+    scrollContainerToTop(detailScrollRef.current);
   }, [selectedShop, viewMode]);
 
   useLayoutEffect(() => {
@@ -672,6 +689,7 @@ export function HomeContent({
     setSearchConditions(conditions);
     pushSearchUrl(conditions);
     setActiveTab("search");
+    setSearchView("list");
     setViewMode("list");
     setSearchInput(conditions.keyword);
     setSearchExpanded(true);
@@ -732,6 +750,41 @@ export function HomeContent({
     startListWithConditions(conditions);
     beginResultLoadingFeedback("skeleton");
     await fetchShops(1, coords, conditions);
+  };
+
+  /** 地図「このエリアを検索」: 地図中心 + ズーム連動半径で再検索 */
+  const handleSearchArea = (center: GeoCoords, zoom: number): void => {
+    setErrorMessage(null);
+    const nextConditions: ShopSearchConditions = {
+      ...searchConditions,
+      range: zoomToRangeValue(zoom),
+    };
+    setSearchOrigin(center);
+    setSearchConditions(nextConditions);
+    if (viewMode !== "list") setViewMode("list");
+    replaceSearchUrl(nextConditions);
+    beginResultLoadingFeedback("skeleton");
+    void fetchShops(1, center, nextConditions);
+  };
+
+  /** 地図のキーワード検索: 現在の原点で keyword 反映して再検索 */
+  const handleMapKeywordSubmit = (keyword: string): void => {
+    const origin =
+      searchOrigin ?? (lat !== null && lng !== null ? { lat, lng } : null);
+    if (!origin) {
+      void handleSearchFromHere();
+      return;
+    }
+    const nextConditions: ShopSearchConditions = {
+      ...searchConditions,
+      keyword,
+    };
+    setSearchConditions(nextConditions);
+    setSearchInput(keyword);
+    if (viewMode !== "list") setViewMode("list");
+    replaceSearchUrl(nextConditions);
+    beginResultLoadingFeedback("skeleton");
+    void fetchShops(1, origin, nextConditions);
   };
 
   const handleCategorySearch = (category: SearchOption): void => {
@@ -906,9 +959,55 @@ export function HomeContent({
         ) : null}
       </AnimatePresence>
 
+      {isSearchMapView && viewMode !== "detail" ? (
+        <div className="fixed inset-0 z-10 mx-auto w-full max-w-[28rem]">
+          <ShopsMapView
+            coords={lat !== null && lng !== null ? { lat, lng } : null}
+            searchOrigin={searchOrigin}
+            shops={shops}
+            keyword={searchConditions.keyword}
+            isSearching={isSearching}
+            isLocating={isLocating}
+            onSelectShop={(shop) => {
+              handleSelectShop(shop, "search");
+            }}
+            onSearchHere={() => {
+              void handleSearchFromHere();
+            }}
+            onSearchArea={handleSearchArea}
+            onKeywordSubmit={handleMapKeywordSubmit}
+            onOpenFilters={() => {
+              setConditionPanelOpen(true);
+            }}
+          />
+        </div>
+      ) : null}
+
+      {viewMode === "detail" && selectedShop ? (
+        <div
+          ref={detailScrollRef}
+          className="app-scroll-root fixed inset-0 z-20 mx-auto w-full max-w-[28rem] bg-background"
+        >
+          <main className="page-shell page-shell--flush-top mx-auto min-h-full w-full min-w-0">
+            <RestaurantDetail
+              shop={selectedShop}
+              onBack={handleDetailBack}
+              isFavorite={isFavorite(selectedShop.id)}
+              onToggleFavorite={() => {
+                toggleFavorite(selectedShop);
+              }}
+            />
+          </main>
+        </div>
+      ) : null}
+
       <div
         ref={scrollContainerRef}
-        className="app-scroll-root relative mx-auto w-full min-w-0 max-w-[28rem]"
+        className={cn(
+          "app-scroll-root relative mx-auto w-full min-w-0 max-w-[28rem]",
+          viewMode === "detail" && "pointer-events-none overflow-hidden",
+        )}
+        aria-hidden={viewMode === "detail" ? true : undefined}
       >
         {showAppBar ? <div aria-hidden className="app-bar-spacer" /> : null}
         <main
@@ -1004,6 +1103,7 @@ export function HomeContent({
 
             {errorMessage &&
             isSearchListView &&
+            viewMode === "list" &&
             !needsLocationForList ? (
               <p
                 role="alert"
@@ -1013,7 +1113,7 @@ export function HomeContent({
               </p>
             ) : null}
 
-            {isSearchListView ? (
+            {isSearchListView && viewMode === "list" ? (
               <PullNextPageBounceShell
                 pullOffset={pullNextPage.pullOffset}
                 isPulling={pullNextPage.isPulling}
@@ -1150,7 +1250,9 @@ export function HomeContent({
               </PullNextPageBounceShell>
             ) : null}
 
-            {activeTab !== "home" && activeTab !== "search" ? (
+            {activeTab !== "home" &&
+            activeTab !== "search" &&
+            viewMode !== "detail" ? (
               <section className="space-y-3 px-1 pt-4">
                 <Typography as="h1" variant="headline-md" className="font-brand">
                   {activeTab === "history"
@@ -1164,20 +1266,22 @@ export function HomeContent({
                 </TypographyMuted>
               </section>
             ) : null}
-
-            {viewMode === "detail" && selectedShop ? (
-              <RestaurantDetail
-                shop={selectedShop}
-                onBack={handleDetailBack}
-                isFavorite={isFavorite(selectedShop.id)}
-                onToggleFavorite={() => {
-                  toggleFavorite(selectedShop);
-                }}
-              />
-            ) : null}
           </div>
         </main>
       </div>
+
+      {isSearchTab &&
+      hasSearched &&
+      viewMode !== "detail" &&
+      !conditionPanelOpen ? (
+        <SearchViewToggle
+          view={searchView}
+          onToggle={() => {
+            setSearchView((current) => (current === "list" ? "map" : "list"));
+            if (viewMode !== "list") setViewMode("list");
+          }}
+        />
+      ) : null}
 
       <BottomNav
         active={activeTab}
