@@ -5,7 +5,12 @@ import { motion } from "motion/react";
 
 import { SearchConditionPanel } from "@/components/coco/shop-list/search-condition-panel";
 import { AnimatedNumber } from "@/components/ui/animated-number";
-import { LiquidGlassButton } from "@/components/ui/liquid-glass-button";
+import {
+  APP_BAR_FLOAT_PANEL_CLASS,
+  FILTER_FOOTER_CAPSULE_CLASS,
+  FILTER_FOOTER_ROW_CLASS,
+  LiquidCapsuleButton,
+} from "@/components/ui/liquid-capsule-button";
 import { TEXT } from "@/constants/text";
 import { useSearchPreviewCount } from "@/hooks/use-search-preview-count";
 import {
@@ -111,7 +116,7 @@ export function SearchConditionOverlay({
       <motion.button
         type="button"
         aria-label={TEXT.search.closeFilters}
-        className="absolute inset-0 bg-foreground/20 backdrop-blur-[1px]"
+        className="absolute inset-0 bg-foreground/32"
         onClick={onClose}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -119,39 +124,45 @@ export function SearchConditionOverlay({
         transition={SCRIM_TRANSITION}
       />
 
-      {/* フィルターシート（AppBar 直下から落下） */}
+      {/* フィルターシート（AppBar 下・横インセットの浮遊ガラス） */}
       <motion.div
         role="dialog"
         aria-modal="true"
         aria-label={TEXT.search.filterDialogTitle}
-        className="search-filter-overlay-scroll bg-surface shadow-lg ring-1 ring-border/70"
+        className="search-filter-overlay-panel"
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -10 }}
         transition={SHEET_TRANSITION}
       >
-        {mastersErrorMessage ? (
-          <p
-            role="alert"
-            className="bg-error-container px-4 py-2 text-xs text-on-error-container"
-          >
-            {mastersErrorMessage}
-          </p>
-        ) : null}
+        <div
+          className={cn(APP_BAR_FLOAT_PANEL_CLASS, "flex min-h-0 flex-1 flex-col")}
+        >
+          {mastersErrorMessage ? (
+            <p
+              role="alert"
+              className="bg-error-container px-4 py-2 text-xs text-on-error-container"
+            >
+              {mastersErrorMessage}
+            </p>
+          ) : null}
 
-        <SearchConditionPanel
-          conditions={draft}
-          rangeOptions={rangeOptions}
-          genres={genres}
-          specials={specials}
+          <div className="search-filter-overlay-scroll">
+            <SearchConditionPanel
+              conditions={draft}
+              rangeOptions={rangeOptions}
+              genres={genres}
+              specials={specials}
 
-          budgetHistogramCounts={budgetHistogramCounts}
-          onChange={setDraft}
-          className="pb-4"
-        />
+              budgetHistogramCounts={budgetHistogramCounts}
+              onChange={setDraft}
+              className="pb-4"
+            />
+          </div>
+        </div>
       </motion.div>
 
-      {/* 下部フッター（適用ボタン） */}
+      {/* 下部フッター（AppBar カプセルと同型） */}
       <motion.div
         className="search-filter-overlay-footer"
         initial={{ opacity: 0, y: 12 }}
@@ -159,43 +170,45 @@ export function SearchConditionOverlay({
         exit={{ opacity: 0, y: 12 }}
         transition={SHEET_TRANSITION}
       >
-        <div className="flex gap-2">
-          <LiquidGlassButton
-            variant="on-glass"
-            className="h-12 shrink-0 px-5 text-base text-muted-foreground"
-            disabled={isDraftDefault}
-            onClick={() => {
-              setDraft(DEFAULT_SHOP_SEARCH_CONDITIONS);
-            }}
-          >
-            {TEXT.search.clearFilters}
-          </LiquidGlassButton>
-          <LiquidGlassButton
-            variant="primary"
-            className="h-12 min-w-0 flex-1 px-5 text-base"
-            disabled={displayTotal === 0 && !preview.error}
-            aria-label={
-              displayTotal === null || preview.error
-                ? TEXT.search.applyFilters
-                : `${displayTotal.toLocaleString("ja-JP")}${TEXT.search.applyWithCountSuffix}`
-            }
-            onClick={() => {
-              if (isDirty) {
-                onApply(draft);
-              } else {
-                onClose();
+        <div className={FILTER_FOOTER_CAPSULE_CLASS}>
+          <div className={FILTER_FOOTER_ROW_CLASS}>
+            <LiquidCapsuleButton
+              variant="input"
+              className="h-12 shrink-0 px-5"
+              disabled={isDraftDefault}
+              onClick={() => {
+                setDraft(DEFAULT_SHOP_SEARCH_CONDITIONS);
+              }}
+            >
+              {TEXT.search.clearFilters}
+            </LiquidCapsuleButton>
+            <LiquidCapsuleButton
+              variant="primary"
+              className="h-12 min-w-0 flex-1 px-5"
+              disabled={displayTotal === 0 && !preview.error}
+              aria-label={
+                displayTotal === null || preview.error
+                  ? TEXT.search.applyFilters
+                  : `${displayTotal.toLocaleString("ja-JP")}${TEXT.search.applyWithCountSuffix}`
               }
-            }}
-          >
-            {displayTotal === null || preview.error ? (
-              TEXT.search.applyFilters
-            ) : (
-              <span className="flex items-baseline gap-0.5 tabular-nums">
-                <AnimatedNumber value={displayTotal} />
-                <span>{TEXT.search.applyWithCountSuffix}</span>
-              </span>
-            )}
-          </LiquidGlassButton>
+              onClick={() => {
+                if (isDirty) {
+                  onApply(draft);
+                } else {
+                  onClose();
+                }
+              }}
+            >
+              {displayTotal === null || preview.error ? (
+                TEXT.search.applyFilters
+              ) : (
+                <span className="flex items-baseline gap-0.5 tabular-nums">
+                  <AnimatedNumber value={displayTotal} />
+                  <span>{TEXT.search.applyWithCountSuffix}</span>
+                </span>
+              )}
+            </LiquidCapsuleButton>
+          </div>
         </div>
       </motion.div>
     </div>

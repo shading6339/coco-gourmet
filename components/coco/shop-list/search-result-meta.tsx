@@ -1,7 +1,6 @@
 import type { JSX } from "react";
 
-import { AnimatedNumber } from "@/components/ui/animated-number";
-import { TEXT } from "@/constants/text";
+import { formatResultTotal } from "@/lib/pagination/format-result-count";
 import type { ShopSortKey } from "@/lib/search/filter-shops";
 
 type SortOption = {
@@ -35,8 +34,7 @@ export function SearchResultMeta({
     >
       <div className="min-w-0 space-y-0.5">
         <span className="block truncate text-left tabular-nums">
-          <AnimatedNumber value={total} />
-          {TEXT.search.resultCountSuffix}
+          {formatResultTotal(total)}
         </span>
         {resultNote ? (
           <span className="block truncate text-[11px] text-muted-foreground/80">
