@@ -4,6 +4,7 @@ import { useState, type JSX } from "react";
 
 import { AnimatedNumber } from "@/components/ui/animated-number";
 import {
+  AppBar,
   Badge,
   Button,
   Input,
@@ -18,6 +19,8 @@ import {
   TypographyLead,
   TypographyMuted,
 } from "@/components/ui";
+import type { AppBarMode } from "@/components/ui/app-bar";
+import { BottomNav, type BottomNavTab } from "@/components/ui/bottom-nav";
 import {
   Card,
   CardContent,
@@ -26,6 +29,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { GlassBadge } from "@/components/ui/glass-badge";
+import { GlassPanel } from "@/components/ui/glass-panel";
+import { GlassSelect } from "@/components/ui/glass-select";
+import { LiquidGlassButton } from "@/components/ui/liquid-glass-button";
 import { TEXT } from "@/constants/text";
 import type { SearchRangeOption } from "@/types/search-range";
 
@@ -50,15 +57,37 @@ function Section({
   );
 }
 
-/** Issue 2: デザイントークン・UI プリミティブの仮プレビュー（Storybook 代替） */
+/** Issue 2–3: デザイントークン・UI プリミティブ・Liquid Glass の仮プレビュー（Storybook 代替） */
 export function DesignSystemPreview(): JSX.Element {
   const [range, setRange] = useState("500");
   const [count, setCount] = useState(128);
   const [tab, setTab] = useState("tab-a");
+  const [appBarMode, setAppBarMode] = useState<AppBarMode>("home");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchExpanded, setSearchExpanded] = useState(false);
+  const [filterExpanded, setFilterExpanded] = useState(false);
+  const [navTab, setNavTab] = useState<BottomNavTab>("home");
+  const [sortOrder, setSortOrder] = useState("distance");
 
   return (
-    <div className="space-y-10 pb-8">
-      <header className="space-y-2">
+    <>
+      <AppBar
+        mode={appBarMode}
+        value={searchQuery}
+        onChange={setSearchQuery}
+        searchExpanded={searchExpanded}
+        onSearchExpandedChange={setSearchExpanded}
+        showFilter={appBarMode === "results"}
+        filterActiveCount={appBarMode === "results" ? 3 : 0}
+        filterExpanded={filterExpanded}
+        onFilterClick={() => setFilterExpanded((open) => !open)}
+        showBack={appBarMode === "results"}
+        onBack={() => setAppBarMode("home")}
+      />
+      <div aria-hidden className="app-bar-spacer" />
+
+      <div className="space-y-10 pb-8">
+        <header className="space-y-2">
         <TypographyH1>{TEXT.common.appTitle}</TypographyH1>
         <TypographyLead>{TEXT.common.appDescription}</TypographyLead>
         <TypographyMuted>
@@ -155,6 +184,57 @@ export function DesignSystemPreview(): JSX.Element {
         />
       </Section>
 
+      <Section title="Liquid Glass">
+        <TypographyMuted>
+          上部 AppBar・下部 BottomNav は固定配置。タブ切替で pill モーフ、ボタン押下で spring を確認。
+        </TypographyMuted>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant={appBarMode === "home" ? "default" : "outline"}
+            onClick={() => {
+              setAppBarMode("home");
+              setFilterExpanded(false);
+            }}
+          >
+            AppBar: home
+          </Button>
+          <Button
+            size="sm"
+            variant={appBarMode === "results" ? "default" : "outline"}
+            onClick={() => {
+              setAppBarMode("results");
+              setSearchExpanded(true);
+            }}
+          >
+            AppBar: results
+          </Button>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <LiquidGlassButton variant="glass" className="px-4 py-2">
+            Glass
+          </LiquidGlassButton>
+          <LiquidGlassButton variant="primary" className="px-4 py-2">
+            Primary
+          </LiquidGlassButton>
+          <LiquidGlassButton variant="on-glass" className="px-4 py-2">
+            On glass
+          </LiquidGlassButton>
+        </div>
+        <GlassPanel className="flex flex-wrap items-center gap-2 p-3">
+          <GlassBadge>neutral</GlassBadge>
+          <GlassBadge variant="active">active</GlassBadge>
+          <GlassSelect
+            value={sortOrder}
+            onChange={(event) => setSortOrder(event.target.value)}
+            aria-label="並び順"
+          >
+            <option value="distance">距離順</option>
+            <option value="rating">評価順</option>
+          </GlassSelect>
+        </GlassPanel>
+      </Section>
+
       <Section title="Glass">
         <div className="space-y-3">
           <div className="glass rounded-lg px-4 py-3">
@@ -168,6 +248,9 @@ export function DesignSystemPreview(): JSX.Element {
           <div className="h-16 rounded-lg skeleton" aria-hidden />
         </div>
       </Section>
-    </div>
+      </div>
+
+      <BottomNav active={navTab} onChange={setNavTab} />
+    </>
   );
 }
