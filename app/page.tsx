@@ -1,7 +1,11 @@
-export default function Home() {
+import { DesignSystemPreview } from "@/app/design-system-preview";
+
+export default function Home(): React.JSX.Element {
   return (
-    <main className="flex min-h-screen items-center justify-center">
-      <p className="text-xl font-semibold">coco-gourmet</p>
-    </main>
+    <div className="app-scroll-root">
+      <main className="page-shell mx-auto">
+        <DesignSystemPreview />
+      </main>
+    </div>
   );
 }
