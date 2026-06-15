@@ -5,3 +5,5 @@ export { RecommendationSections } from "@/components/coco/home/recommendation-se
 export { SearchConditionOverlay } from "@/components/coco/shop-list/search-condition-overlay";
 export { SearchConditionPanel } from "@/components/coco/shop-list/search-condition-panel";
 export { SearchResultMeta } from "@/components/coco/shop-list/search-result-meta";
+export { RestaurantCard } from "@/components/coco/shop-list/restaurant-card";
+export { SkeletonCard } from "@/components/coco/shop-list/skeleton-card";

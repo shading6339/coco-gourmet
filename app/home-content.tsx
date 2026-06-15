@@ -17,8 +17,10 @@ import {
   GenreGrid,
   HomeHero,
   RecommendationSections,
+  RestaurantCard,
   SearchConditionOverlay,
   SearchResultMeta,
+  SkeletonCard,
 } from "@/components/coco";
 import { SearchActiveChips } from "@/components/coco/shop-list/search-active-chips";
 import { AppBar } from "@/components/ui/app-bar";
@@ -28,6 +30,7 @@ import { LiquidGlassButton } from "@/components/ui/liquid-glass-button";
 import { Typography, TypographyMuted } from "@/components/ui/typography";
 import { SHOP_PAGE_SIZE } from "@/constants/pagination";
 import { TEXT } from "@/constants/text";
+import { useFavorites } from "@/hooks/use-favorites";
 import { useLocationState } from "@/hooks/use-location-state";
 import { useSearchUrlState } from "@/hooks/use-search-url-state";
 import { useShopSearch } from "@/hooks/use-shop-search";
@@ -85,7 +88,6 @@ type HomeContentProps = {
   initialUrlState: SearchUrlState;
 };
 
-const SKELETON_COUNT = 3;
 const SKELETON_DELAY_MS = 450;
 const SLOW_RANGE_VALUES = new Set(["4", "5"]);
 
@@ -196,6 +198,10 @@ export function HomeContent({
   const [mastersErrorMessage, setMastersErrorMessage] = useState<string | null>(
     null,
   );
+  /** Issue 10 で詳細ビューに接続するための選択店舗 */
+  const [selectedShop, setSelectedShop] = useState<Shop | null>(null);
+
+  const { isFavorite, toggleFavorite } = useFavorites();
 
   const {
     lat,
@@ -670,6 +676,11 @@ export function HomeContent({
     }
   };
 
+  const handleSelectShop = (shop: Shop): void => {
+    setSelectedShop(shop);
+    // Issue 10: RestaurantDetail へ接続（selectedShop を参照）
+  };
+
   return (
     <>
       {showAppBar ? (
@@ -718,6 +729,7 @@ export function HomeContent({
 
       <div
         ref={scrollContainerRef}
+        data-selected-shop-id={selectedShop?.id ?? undefined}
         className="app-scroll-root relative mx-auto w-full min-w-0 max-w-[28rem]"
       >
         {showAppBar ? <div aria-hidden className="app-bar-spacer" /> : null}
@@ -871,14 +883,9 @@ export function HomeContent({
                 ) : null}
 
                 {showResultSkeleton ? (
-                  <div className="space-y-4" aria-busy="true" aria-live="polite">
-                    {Array.from({ length: SKELETON_COUNT }, (_, index) => (
-                      <div
-                        key={index}
-                        className="skeleton h-28 w-full rounded-lg"
-                        style={{ animationDelay: `${index * 120}ms` }}
-                        aria-hidden
-                      />
+                  <div className="space-y-3" aria-busy="true" aria-live="polite">
+                    {Array.from({ length: SHOP_PAGE_SIZE }, (_, index) => (
+                      <SkeletonCard key={index} delayMs={index * 120} />
                     ))}
                   </div>
                 ) : null}
@@ -913,24 +920,16 @@ export function HomeContent({
 
                 {!showResultSkeleton && !isLocating && shops.length > 0 ? (
                   <div className="min-w-0 space-y-3">
-                    {shops.map((shop: Shop) => (
-                      <article
+                    {shops.map((shop) => (
+                      <RestaurantCard
                         key={shop.id}
-                        className="rounded-lg bg-surface p-4 ring-1 ring-foreground/6 shadow-[var(--shadow-card)]"
-                      >
-                        <p className="font-medium text-foreground">{shop.name}</p>
-                        {shop.genreName ? (
-                          <p className="mt-1 text-sm text-muted-foreground">
-                            {shop.genreName}
-                          </p>
-                        ) : null}
-                        {shop.distanceMeters !== null ? (
-                          <p className="mt-1 text-xs tabular-nums text-muted-foreground">
-                            {shop.distanceMeters.toLocaleString("ja-JP")}
-                            {TEXT.common.rangeUnit}
-                          </p>
-                        ) : null}
-                      </article>
+                        shop={shop}
+                        isFavorite={isFavorite(shop.id)}
+                        onToggleFavorite={toggleFavorite}
+                        onShowDetail={() => {
+                          handleSelectShop(shop);
+                        }}
+                      />
                     ))}
                   </div>
                 ) : null}
