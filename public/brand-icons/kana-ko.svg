@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">ここぐる kana ko icon</title>
+  <desc id="desc">A rounded orange icon based on the Japanese kana ko.</desc>
+  <rect width="64" height="64" rx="16" fill="#FFFCF9"/>
+  <circle cx="32" cy="32" r="27" fill="#E8470A"/>
+  <path fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="8" d="M22 23.5h22"/>
+  <path fill="none" stroke="#fff" stroke-linecap="round" stroke-width="8" d="M24 38.5c4.5 4.2 12.4 4.2 17 0"/>
+  <circle cx="46" cy="44" r="4.5" fill="#FFEDB6"/>
+</svg>
