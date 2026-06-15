@@ -1,4 +1,17 @@
 export const COMMON_TEXT = {
-  appTitle: "Coco Gourmet",
+  appTitle: "ここぐる",
   appDescription: "現在地から周辺のお店を探せます。",
+  backLabel: "戻る",
+  noImage: "画像なし",
+  imageAltSuffix: "の画像",
+  rangeUnit: "m",
+  navHome: "ホーム",
+  navSearch: "検索",
+  navHistory: "履歴",
+  navFavorites: "お気に入り",
+  mapToggleToMap: "地図",
+  mapToggleToList: "リスト",
+  mapSearchThisArea: "このエリアを検索",
+  mapSearching: "検索中…",
+  mapKeywordPlaceholder: "キーワードで絞り込み",
 } as const;
