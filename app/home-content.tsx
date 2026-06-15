@@ -293,6 +293,7 @@ export function HomeContent({
   const resetToHome = useCallback((): void => {
     setActiveTab("home");
     setViewMode("search");
+    setSearchOrigin(null);
     resetLocating();
     resetSearchListState();
     setSearchExpanded(false);
@@ -826,15 +827,32 @@ export function HomeContent({
 
   /** タブ切替時に viewMode を翻訳（ホーム=ランディング / 検索=結果） */
   const handleTabChange = (tab: BottomNavTab): void => {
+    const isLeavingDetail = viewMode === "detail";
+
     if (tab === activeTab) {
+      if (isLeavingDetail) {
+        setSelectedShop(null);
+        if (tab === "search") {
+          setViewMode("list");
+        } else {
+          setViewMode("search");
+        }
+      }
       scrollContainerToTop(scrollContainerRef.current);
       return;
     }
+
+    if (isLeavingDetail) {
+      setSelectedShop(null);
+    }
+
     if (tab === "home") {
       // 検索状態(shops/conditions)は保持したままランディングを表示
       if (viewMode === "list" || viewMode === "detail") setViewMode("search");
     } else if (tab === "search") {
       setViewMode("list");
+    } else if (isLeavingDetail) {
+      setViewMode("search");
     }
     setActiveTab(tab);
     scrollContainerToTop(scrollContainerRef.current);
@@ -842,7 +860,9 @@ export function HomeContent({
 
   const handleAppBarBack = (): void => {
     if (viewMode === "list") {
-      resetToHome();
+      setActiveTab("home");
+      setViewMode("search");
+      setConditionPanelOpen(false);
       pushHomeUrl();
     }
   };
@@ -1261,7 +1281,7 @@ export function HomeContent({
       <BottomNav
         active={activeTab}
         onChange={handleTabChange}
-        hidden={viewMode === "detail" || conditionPanelOpen}
+        hidden={conditionPanelOpen}
       />
     </>
   );

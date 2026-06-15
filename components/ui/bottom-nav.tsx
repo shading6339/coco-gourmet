@@ -28,7 +28,7 @@ const NAV_ITEMS: ReadonlyArray<{
 type BottomNavProps = {
   active: BottomNavTab;
   onChange: (tab: BottomNavTab) => void;
-  /** 詳細表示・フィルタ表示中は下へ退避 */
+  /** フィルタ表示中は下へ退避 */
   hidden?: boolean;
   className?: string;
 };
